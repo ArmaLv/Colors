@@ -1,0 +1,17 @@
+{
+  "name": "Palette.exe",
+  "short_name": "Palette",
+  "description": "Advanced color extraction, manipulation, and palette management tool",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#e8ff47",
+  "icons": [
+    {
+      "src": "favicon-source.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

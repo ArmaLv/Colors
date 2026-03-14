@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Palette.exe</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="colorpicker.css">
+  <link rel="icon" type="image/png" href="favicon-source.png">
+  <link rel="apple-touch-icon" href="favicon-source.png">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div id="scanline"></div>
+
+  <header>
+    <img src="favicon-source.png" alt="Palette.exe" class="header-logo" width="24" height="24">
+    <h1>Palette<span>.exe</span></h1>
+    <span class="header-tag">Color Tools</span>
+  <div class="header-spacer"></div>
+  <div class="theme-carousel" id="themeCarousel" aria-label="Theme presets"></div>
+  <div class="scanline-toggle" onclick="toggleScanline()">
+    <span>Scanlines</span>
+    <div class="toggle-track" id="scanlineTrack">
+      <div class="toggle-thumb"></div>
+    </div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('extractor', this)">// Extractor</button>
+  <button class="tab-btn" onclick="switchTab('swapper', this)">// Palette Swapper</button>
+  <button class="tab-btn" onclick="switchTab('palettes', this)">// Palettes</button>
+</div>
+
+<div class="tab-panel active" id="tab-extractor">
+  <div class="extractor-layout">
+
+    <div class="left">
+      <div class="panel-header">// Input Image</div>
+
+      <div id="dropZone" class="drop-zone">
+        <input type="file" id="fileInput" accept="image/*">
+        <div class="drop-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="1"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+        </div>
+        <div class="drop-text">
+          <strong>Drop image here</strong>
+          or click to browse<br>PNG · JPG · WEBP · GIF
+        </div>
+      </div>
+
+      <div id="imagePreviewWrap" class="image-preview-wrap" style="display:none;">
+        <img id="imagePreview" src="" alt="preview">
+        <div id="imgMeta" class="img-meta"></div>
+        <button class="replace-btn" onclick="resetExtractor()">[ replace image ]</button>
+      </div>
+
+      <canvas id="canvas"></canvas>
+
+      <div class="controls">
+        <div class="control-row">
+          <span class="control-label">Max Colors</span>
+          <input type="range" id="maxColors" min="2" max="1080" value="256" oninput="updateMaxColors(this.value)">
+          <span class="control-value" id="maxColorsVal">256</span>
+        </div>
+
+        <div class="control-row">
+          <span class="control-label">Algorithm</span>
+          <div class="sort-btns">
+            <button class="sort-btn active" onclick="setAlgorithm('quantize',this)">Quantize</button>
+            <button class="sort-btn" onclick="setAlgorithm('kmeans',this)">K-Means</button>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <span class="control-label">Filename</span>
+          <div class="filename-row" style="flex:1;">
+            <input class="filename-input" type="text" id="paletteFilename" value="my_palette" placeholder="palette_name">
+            <span class="filename-ext">.png</span>
+          </div>
+        </div>
+
+        <div class="control-row">
+          <span class="control-label">Sort By</span>
+          <div class="sort-btns">
+            <button class="sort-btn active" onclick="setSort('hue',this)">Hue</button>
+            <button class="sort-btn" onclick="setSort('lum',this)">Luma</button>
+            <button class="sort-btn" onclick="setSort('sat',this)">Sat</button>
+            <button class="sort-btn" onclick="setSort('freq',this)">Freq</button>
+          </div>
+        </div>
+
+        <button class="extract-btn" id="extractBtn" onclick="extractColors()" disabled>
+          Extract Palette
+        </button>
+        <button class="extract-link-btn" id="sendToSwapperBtn" onclick="sendToSwapper()" disabled>
+          Send to Palette Swapper
+        </button>
+        <button class="extract-link-btn" id="saveExtractorToPalettesBtn" onclick="saveExtractorPaletteToPalettes()" disabled>
+          Save Palette to Palettes
+        </button>
+      </div>
+    </div>
+
+    <div class="resize-handle extractor-resizer" id="extractorResizer" title="Drag to resize panels"></div>
+
+    <div class="right">
+      <div class="right-header">
+        <span class="panel-label">// Color Palette</span>
+        <span class="color-count" id="colorCount"></span>
+      </div>
+
+      <div class="palette-toolbar">
+        <input type="text" id="colorFilter" class="color-filter" placeholder="Filter colors..." oninput="filterColors()">
+        <div class="palette-actions">
+          <button class="sort-btn" onclick="selectAllColors()">Select All</button>
+          <button class="sort-btn" onclick="clearSelection()">Clear</button>
+        </div>
+      </div>
+
+      <div class="palette-area" id="paletteArea">
+        <div class="empty-state" id="emptyState">
+          <div class="em-icon">
+            <div class="em-swatch" style="background:#e8ff47"></div>
+            <div class="em-swatch" style="background:#ff4747"></div>
+            <div class="em-swatch" style="background:#47a9ff"></div>
+            <div class="em-swatch" style="background:#ff47d4"></div>
+          </div>
+          Upload an image to extract its colors
+        </div>
+      </div>
+
+      <div class="color-detail" id="colorDetail" style="display:none;">
+        <div class="detail-swatch" id="detailSwatch"></div>
+        <div class="detail-info">
+          <div class="detail-row">
+            <span class="detail-label">HEX</span>
+            <span class="detail-value" id="detailHex">#000000</span>
+            <button class="detail-copy" onclick="copyDetail('hex')">📋</button>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">RGB</span>
+            <span class="detail-value" id="detailRgb">0, 0, 0</span>
+            <button class="detail-copy" onclick="copyDetail('rgb')">📋</button>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">HSL</span>
+            <span class="detail-value" id="detailHsl">0°, 0%, 0%</span>
+            <button class="detail-copy" onclick="copyDetail('hsl')">📋</button>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Freq</span>
+            <span class="detail-value" id="detailFreq">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="download-bar">
+        <select id="extractorExportFormat" class="export-select" onchange="updateExportInfo()">
+          <option value="png">PNG</option>
+          <option value="json">JSON</option>
+          <option value="scss">SCSS</option>
+          <option value="tailwind">Tailwind</option>
+          <option value="gpl">GIMP</option>
+        </select>
+        <div class="download-info" id="downloadInfo">1px × N palette</div>
+        <button class="download-btn" id="downloadBtn" onclick="downloadPalette()" disabled>
+          ↓ Export
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="tab-panel" id="tab-swapper">
+  <div class="swapper-layout">
+
+    <div class="swap-sidebar">
+      <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>// Load Image</span>
+        <button class="replace-btn" id="replaceImageBtn" style="display:none;padding:2px 8px;font-size:0.5rem;" onclick="resetSwapImage()">Replace</button>
+      </div>
+
+      <div class="palettes-toolbar" style="padding:8px 14px;">
+        <span class="control-label" style="flex: 1;">Extract:</span>
+        <div class="sort-btns">
+          <button class="sort-btn active" onclick="setSwapExtractionMethod('quantize', this)">Quantize</button>
+          <button class="sort-btn" onclick="setSwapExtractionMethod('kmeans', this)">K-Means</button>
+        </div>
+      </div>
+
+      <div id="swapDropZone" class="swap-drop-zone">
+        <input type="file" id="swapFileInput" accept="image/*">
+        <div class="swap-drop-content" id="swapDropContent">
+          <div class="drop-icon" style="width:48px;height:48px;margin-bottom:12px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="3" width="18" height="18" rx="1"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <path d="M21 15l-5-5L5 21"/>
+            </svg>
+          </div>
+          <div class="drop-text" style="font-size:0.65rem;">
+            <strong style="font-size:0.85rem;">Drop image here</strong>
+            or click to browse
+          </div>
+        </div>
+        <div class="swap-image-preview" id="swapImagePreview" style="display:none;">
+          <img id="swapPreviewImg" src="" alt="preview">
+          <div class="swap-preview-info" id="swapPreviewInfo"></div>
+        </div>
+      </div>
+
+      <div class="swap-controls-scroll">
+        <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>// Color Map</span>
+          <span id="swapColorCount" style="color:var(--accent);"></span>
+        </div>
+
+        <div class="swap-palette-list" id="swapPaletteList">
+          <div style="color:var(--muted);font-size:0.6rem;text-align:center;padding:20px 0;">
+            Load an image to see its colors
+          </div>
+        </div>
+      </div>
+
+      <div class="swap-actions">
+        <div class="swap-tolerance-row">
+          <span style="white-space:nowrap;">Tolerance</span>
+          <input type="range" id="swapTolerance" min="0" max="60" value="10" oninput="updateTolerance(this.value)">
+          <span id="swapToleranceVal" style="color:var(--accent);font-size:0.6rem;min-width:24px;">10</span>
+        </div>
+        <div class="swap-tolerance-row">
+          <span style="white-space:nowrap;">Palettes</span>
+          <select id="swapperPalettesSelect" onchange="onSwapperPaletteSelectChanged()">
+            <option value="">-- From Palettes --</option>
+          </select>
+          <button class="swap-btn secondary" style="padding:4px 8px;width:auto;font-size:0.5rem;" onclick="applySelectedPaletteToSwapper()">Load</button>
+          <button class="swap-btn secondary" style="padding:4px 8px;width:auto;font-size:0.5rem;" onclick="saveSwapperPaletteToPalettes()" title="Save current replacement palette to Palettes">Save</button>
+        </div>
+        <div class="swap-tolerance-row">
+          <span style="white-space:nowrap;">Format</span>
+          <select id="outputFormat">
+            <option value="png">PNG</option>
+            <option value="jpg">JPG</option>
+            <option value="webp">WebP</option>
+          </select>
+        </div>
+        <div class="swap-tolerance-row">
+          <select id="presetSelect" onchange="loadPreset()">
+            <option value="">-- Presets --</option>
+          </select>
+          <button class="swap-btn secondary" style="padding:4px 8px;width:auto;font-size:0.5rem;" onclick="savePreset()">+</button>
+          <button class="swap-btn secondary" style="padding:4px 8px;width:auto;font-size:0.5rem;" onclick="deletePreset()">×</button>
+        </div>
+        <div class="swap-tolerance-row">
+          <span style="white-space:nowrap;">Order</span>
+          <button class="swap-btn secondary" style="padding:4px 8px;width:auto;font-size:0.5rem;" onclick="triggerOrderPaletteUpload()" title="Apply color order from a 1px-high palette strip image">From Strip</button>
+          <input type="file" id="orderPaletteFile" accept="image/*" style="display:none" onchange="applyOrderFromPaletteStrip(event)">
+        </div>
+        <button class="swap-btn" id="applySwapBtn" onclick="applySwap()" disabled>Apply Color Swap</button>
+        <button class="swap-btn secondary" id="resetSwapBtn" onclick="resetSwapColors()" disabled>Reset Colors</button>
+        <div class="swap-tolerance-row">
+          <select id="exportFormat">
+            <option value="png_sheet">PNG Sheet (pack)</option>
+            <option value="png_each">PNG Swatches (each)</option>
+            <option value="css">CSS Variables</option>
+            <option value="ase">ASE (Adobe)</option>
+          </select>
+          <button class="swap-btn secondary" style="padding:4px 12px;width:auto;font-size:0.5rem;" onclick="exportPalette()">↓ Export</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-handle swapper-resizer" id="swapperResizer" title="Drag to resize panels"></div>
+
+    <div class="swap-canvas-area" id="swapCanvasArea">
+      <div class="swap-server-status">
+        <div class="status-dot" id="serverDot"></div>
+        <span id="serverStatus">checking server...</span>
+      </div>
+
+      <div class="swap-empty" id="swapEmpty">
+        <div class="em-icon" style="width:52px;height:52px;">
+          <div class="em-swatch" style="background:#e8ff47"></div>
+          <div class="em-swatch" style="background:#ff4747"></div>
+          <div class="em-swatch" style="background:#47a9ff"></div>
+          <div class="em-swatch" style="background:#ff47d4"></div>
+        </div>
+        Load an image and remap its colors<br>
+        <span style="font-size:0.56rem;color:#333;">Requires palette_server.py running on localhost:5050</span>
+      </div>
+
+      <div class="swap-canvas-wrap" id="swapCanvasWrap" style="display:none;">
+        <canvas id="swapOutputCanvas"></canvas>
+      </div>
+
+      <div class="swap-canvas-actions" id="swapCanvasActions" style="display:none;">
+        <button class="swap-btn" style="padding:8px 20px;width:auto;" onclick="downloadSwapResult()">↓ Download Result</button>
+        <button class="swap-btn secondary" style="padding:8px 20px;width:auto;" onclick="renameSwapResult()">✎ Rename</button>
+        <span class="swap-filename" id="swapFilenameDisplay" style="color:var(--muted);font-size:0.6rem;font-family:'Space Mono',monospace;"></span>
+        <button class="swap-btn secondary" id="livePreviewBtn" style="padding:8px 20px;width:auto;" onclick="toggleLivePreview()">◉ Live</button>
+        <button class="swap-btn secondary" style="padding:8px 20px;width:auto;" onclick="undoSwap()">↩ Undo</button>
+        <button class="swap-btn secondary" style="padding:8px 20px;width:auto;" onclick="redoSwap()">↪ Redo</button>
+        <button class="swap-btn secondary" style="padding:8px 20px;width:auto;" onclick="revertSwap()">Revert</button>
+        <button class="swap-btn secondary" style="padding:8px 20px;width:auto;" onclick="toggleZoom()">🔍 Zoom</button>
+        <div class="canvas-theme-slider">
+          <span class="canvas-theme-icon" id="canvasThemeIcon">☾</span>
+          <input type="range" min="0" max="100" value="100" id="canvasThemeSlider" onchange="setCanvasTheme(this.value)" oninput="setCanvasTheme(this.value)">
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="tab-panel" id="tab-palettes">
+  <div class="palettes-layout">
+    <div class="palettes-left">
+      <div class="panel-header">// Palettes</div>
+
+      <div class="palettes-toolbar">
+        <input type="text" id="palettesSearch" class="color-filter" placeholder="Search palettes..." oninput="renderPalettesTab()">
+        <button class="sort-btn" onclick="createNewPalette()">New</button>
+        <button class="sort-btn" onclick="exportPalettesJSON()">Export</button>
+        <button class="sort-btn" onclick="triggerImportPalettesJSON()">Import</button>
+        <input type="file" id="palettesImportFile" accept="application/json,.json" style="display:none" onchange="importPalettesJSON(event)">
+      </div>
+
+      <div class="palettes-list" id="palettesList">
+        <div class="empty-state" style="padding:30px 0;">
+          Save palettes from Extractor/Swapper, or create one here.
+        </div>
+      </div>
+    </div>
+
+    <div class="resize-handle palettes-resizer" id="palettesResizer" title="Drag to resize panels"></div>
+
+    <div class="palettes-right">
+      <div class="right-header">
+        <span class="panel-label">// Palette Editor</span>
+        <span class="color-count" id="palettesEditorCount"></span>
+      </div>
+
+      <div class="palettes-editor" id="palettesEditor">
+        <div class="empty-state">
+          Select a palette to edit, or click <strong>New</strong>.
+        </div>
+      </div>
+
+      <div class="palettes-download-bar" id="palettesDownloadBar" style="display:none;">
+        <select id="palettesExportFormat" class="export-select" onchange="updatePalettesExportInfo()">
+          <option value="png">PNG</option>
+          <option value="json">JSON</option>
+          <option value="scss">SCSS</option>
+          <option value="tailwind">Tailwind</option>
+          <option value="gpl">GIMP</option>
+        </select>
+        <div class="download-info" id="palettesDownloadInfo">1px × N palette</div>
+        <button class="download-btn" id="palettesDownloadBtn" onclick="downloadActivePalette()">
+          ↓ Export
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="swap-mode-selector-overlay" id="swapModeOverlay" style="display:none;">
+  <div class="swap-mode-dialog" onclick="event.stopPropagation()">
+    <div class="swap-mode-title">// Palette Mode Selection</div>
+    <div class="swap-mode-body">
+      <div class="swap-mode-message">
+        How should the incoming palette be applied?
+      </div>
+      <div class="swap-mode-buttons">
+        <button class="swap-btn" onclick="applyPaletteMode('base'); _completeSendToSwapper('base')">
+          Base Colors Mode<br>
+          <span style="font-size:0.7rem;opacity:0.7;">Replace image colors with these</span>
+        </button>
+        <button class="swap-btn" onclick="applyPaletteMode('swapTo'); _completeSendToSwapper('swapTo')">
+          Swap-to Colors Mode<br>
+          <span style="font-size:0.7rem;opacity:0.7;">Use as replacements for current base colors</span>
+        </button>
+      </div>
+      <button class="swap-btn secondary" onclick="closePaletteModeDialog()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="download-dialog-overlay" id="downloadDialog" style="display:none;">
+  <div class="download-dialog" onclick="event.stopPropagation()">
+    <div class="download-dialog-title">// Export Result</div>
+    <div class="download-dialog-body">
+      <div class="download-dialog-text">
+        Choose what to export for this swap:
+      </div>
+      <div class="download-dialog-buttons">
+        <button class="swap-btn" onclick="downloadResultImageOnly()">Result Image</button>
+        <button class="swap-btn secondary" onclick="downloadResultPaletteStrip()">New Palette Strip (1px × N)</button>
+        <button class="swap-btn secondary" onclick="downloadOriginalPaletteStrip()">Original Palette Strip (1px × N)</button>
+        <button class="swap-btn secondary" onclick="downloadResultPalettePack()">Palette Pack (orig + new)</button>
+      </div>
+      <button class="swap-btn secondary download-dialog-cancel" onclick="closeDownloadDialog()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-dialog">
+    <div class="confirm-message" id="confirmMessage"></div>
+    <div class="confirm-buttons">
+      <button class="confirm-btn cancel" id="confirmCancel">Cancel</button>
+      <button class="confirm-btn confirm" id="confirmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="prompt-overlay" id="promptOverlay">
+  <div class="prompt-dialog">
+    <div class="prompt-message" id="promptMessage"></div>
+    <input type="text" class="prompt-input" id="promptInput">
+    <div class="prompt-buttons">
+      <button class="prompt-btn cancel" id="promptCancel">Cancel</button>
+      <button class="prompt-btn ok" id="promptOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="colorpicker.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
