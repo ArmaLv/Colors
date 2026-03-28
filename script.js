@@ -1,9 +1,6 @@
-// ═══════════════════════════════════════
-//  SHARED UTILS
-// ═══════════════════════════════════════
+// SHARED UTILS
 let scanlineOn = true;
 
-// Saved palettes
 const PALETTES_STATE_KEY = 'palette_saved_palettes_v1';
 const SCANLINE_STATE_KEY = 'palette_scanline_v1';
 const CANVAS_THEME_KEY = 'palette_canvas_theme_v1';
@@ -1066,9 +1063,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { toggleScanline(); }
 });
 
-// ═══════════════════════════════════════
-//  EXTRACTOR
-// ═══════════════════════════════════════
+// EXTRACTOR
 const EXTRACTOR_STATE_KEY = 'palette_extractor_state_v1';
 const SWAPPER_STATE_KEY   = 'palette_swapper_state_v1';
 const LAYOUT_STATE_KEY    = 'palette_layout_state_v1';
@@ -1078,6 +1073,7 @@ let currentImageDataURL = null;
 let extractedColors = [];
 let sortMode = 'hue';
 let extractionAlgorithm = 'quantize';
+let nextColorId = 1; // For assigning unique IDs to extracted colors
 
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -1117,6 +1113,7 @@ function loadExtractorImage(file) {
 
 function resetExtractor() {
   currentImage = null; currentImageDataURL = null; extractedColors = [];
+  nextColorId = 1; // Reset color ID counter
   dropZone.style.display = 'flex';
   document.getElementById('imagePreviewWrap').style.display = 'none';
   document.getElementById('extractBtn').disabled = true;
@@ -1144,7 +1141,17 @@ function setSort(mode, btn) {
   const container = btn.parentElement;
   container.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  if (extractedColors.length) renderPalette(extractedColors);
+  if (extractedColors.length) {
+    // Reorder extractedColors array to match the sort mode
+    const sorted = sortColors(extractedColors);
+    extractedColors = sorted;
+    // Reassign IDs based on new sorted order (1, 2, 3, ...)
+    extractedColors.forEach((color, index) => {
+      color.id = index + 1;
+    });
+    renderPalette(extractedColors);
+    saveExtractorState();
+  }
 }
 
 function setAlgorithm(algo, btn) {
@@ -1154,85 +1161,41 @@ function setAlgorithm(algo, btn) {
   btn.classList.add('active');
 }
 
-function kMeansClustering(pixels, k, maxIterations = 20) {
-  if (pixels.length === 0) return [];
-  const centroids = [];
-  const used = new Set();
-  while (centroids.length < k && centroids.length < pixels.length) {
-    const idx = Math.floor(Math.random() * pixels.length);
-    if (!used.has(idx)) { used.add(idx); centroids.push([...pixels[idx]]); }
-  }
-  for (let iter = 0; iter < maxIterations; iter++) {
-    const clusters = Array.from({ length: k }, () => []);
-    for (const pixel of pixels) {
-      let minDist = Infinity, closestIdx = 0;
-      for (let i = 0; i < centroids.length; i++) {
-        const d = Math.sqrt((pixel[0] - centroids[i][0]) ** 2 + (pixel[1] - centroids[i][1]) ** 2 + (pixel[2] - centroids[i][2]) ** 2);
-        if (d < minDist) { minDist = d; closestIdx = i; }
-      }
-      clusters[closestIdx].push(pixel);
-    }
-    let converged = true;
-    for (let i = 0; i < k; i++) {
-      if (clusters[i].length === 0) continue;
-      const newC = [0, 0, 0];
-      for (const p of clusters[i]) { newC[0] += p[0]; newC[1] += p[1]; newC[2] += p[2]; }
-      newC[0] = Math.round(newC[0] / clusters[i].length);
-      newC[1] = Math.round(newC[1] / clusters[i].length);
-      newC[2] = Math.round(newC[2] / clusters[i].length);
-      if (newC[0] !== centroids[i][0] || newC[1] !== centroids[i][1] || newC[2] !== centroids[i][2]) converged = false;
-      centroids[i] = newC;
-    }
-    if (converged) break;
-  }
-  const counts = Array(k).fill(0);
-  for (const pixel of pixels) {
-    let minDist = Infinity, closestIdx = 0;
-    for (let i = 0; i < centroids.length; i++) {
-      const d = Math.sqrt((pixel[0] - centroids[i][0]) ** 2 + (pixel[1] - centroids[i][1]) ** 2 + (pixel[2] - centroids[i][2]) ** 2);
-      if (d < minDist) { minDist = d; closestIdx = i; }
-    }
-    counts[closestIdx]++;
-  }
-  return centroids.map((c, i) => ({ r: c[0], g: c[1], b: c[2], count: counts[i] })).filter(c => c.count > 0);
-}
-
 function extractColors() {
   if (!currentImage) return;
   const maxC = parseInt(document.getElementById('maxColors').value);
   canvas.width = currentImage.width;
   canvas.height = currentImage.height;
   ctx.drawImage(currentImage, 0, 0);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
   let sorted;
 
   if (extractionAlgorithm === 'kmeans') {
     const pixels = [];
-    const sampleRate = Math.max(1, Math.floor(data.length / 4 / 50000));
-    for (let i = 0; i < data.length; i += 4 * sampleRate) {
+    // For k-means with pixel art, use ALL pixels (no sampling)
+    // Sampling would lose unique colors which defeats k-means purpose
+    for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3] >= 128) pixels.push([data[i], data[i + 1], data[i + 2]]);
     }
-    sorted = kMeansClustering(pixels, maxC);
+    
+    sorted = (window.PaletteKMeans && typeof window.PaletteKMeans.kMeansClustering === 'function')
+      ? window.PaletteKMeans.kMeansClustering(pixels, maxC)
+      : [];
   } else {
-    const colorMap = new Map();
-    const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-      if (a < 128) continue;
-      const qr = clamp(Math.round(r / 4) * 4);
-      const qg = clamp(Math.round(g / 4) * 4);
-      const qb = clamp(Math.round(b / 4) * 4);
-      const key = (qr << 16) | (qg << 8) | qb;
-      colorMap.set(key, (colorMap.get(key) || 0) + 1);
-    }
-    sorted = [...colorMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, maxC)
-      .map(([key, count]) => ({ r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff, count }));
+    sorted = (window.PaletteQuantize && typeof window.PaletteQuantize.quantizeFromRgba === 'function')
+      ? window.PaletteQuantize.quantizeFromRgba(data, maxC, 4)
+      : [];
   }
 
-  extractedColors = sorted;
-  renderPalette(sorted);
+  extractedColors = sorted.map(c => {
+    if (!c.id) c.id = nextColorId++;
+    return c;
+  });
+  const maxId = Math.max(0, ...extractedColors.map(c => c.id || 0));
+  nextColorId = Math.max(nextColorId, maxId + 1);
+  
+  renderPalette(extractedColors);
   document.getElementById('downloadBtn').disabled = false;
   const saveBtn = document.getElementById('saveExtractorToPalettesBtn');
   if (saveBtn) saveBtn.disabled = !extractedColors.length;
@@ -1319,7 +1282,9 @@ function renderPalette(colors) {
     const hex = toHex(c.r, c.g, c.b); sw.title = hex;
     sw.dataset.idx = idx;
     if (selectedColors.has(idx)) sw.classList.add('selected');
-    const lbl = document.createElement('div'); lbl.className = 'swatch-hex'; lbl.textContent = hex;
+    // Display color ID and hex code
+    const colorId = c.id || (idx + 1);
+    const lbl = document.createElement('div'); lbl.className = 'swatch-hex'; lbl.textContent = `${colorId}: ${hex}`;
     sw.appendChild(lbl);
     // Allow dragging colors out to the Palette Swapper (or elsewhere),
     // and reordering within the grid when not filtered.
@@ -1357,6 +1322,10 @@ function renderPalette(colors) {
       const arr = [...lastRenderedColors];
       const [item] = arr.splice(colorDragSrcIdx, 1);
       arr.splice(targetIdx, 0, item);
+      // Reassign IDs based on new order (1, 2, 3, ...)
+      arr.forEach((color, index) => {
+        color.id = index + 1;
+      });
       extractedColors = arr;
       sortMode = 'custom';
       colorDragSrcIdx = null;
@@ -1565,10 +1534,6 @@ async function downloadActivePalette() {
   }
 }
 
-// Build an ordered HEX palette (for Swapper) from the extractor state.
-// If the user has a selection, we use ONLY those colors in the order
-// they appear in the last rendered grid. Otherwise we use the full
-// extracted palette in its current sort/order.
 function buildExtractorPaletteForSwapper() {
   if (!extractedColors || !extractedColors.length) return [];
 
@@ -1578,15 +1543,25 @@ function buildExtractorPaletteForSwapper() {
     const picked = indices
       .map(i => lastRenderedColors[i])
       .filter(Boolean);
-    return picked.map(c => toHex(c.r, c.g, c.b).toUpperCase());
+    return picked.map(c => ({
+      id: c.id || 1,
+      hex: toHex(c.r, c.g, c.b).toUpperCase(),
+      r: c.r,
+      g: c.g,
+      b: c.b
+    }));
   }
 
-  // Fallback: use the whole palette in its current sort/order.
   const ordered = sortColors(extractedColors);
-  return ordered.map(c => toHex(c.r, c.g, c.b).toUpperCase());
+  return ordered.map(c => ({
+    id: c.id || 1,
+    hex: toHex(c.r, c.g, c.b).toUpperCase(),
+    r: c.r,
+    g: c.g,
+    b: c.b
+  }));
 }
 
-// Link current extractor image directly into the Palette Swapper
 function sendToSwapper() {
   if (!currentImageDataURL) {
     showToast('Load an image in the Extractor first', true);
@@ -1630,8 +1605,6 @@ function sendToSwapper() {
 function _completeSendToSwapper(mode) {
   const data = window._pendingSendToSwapperData;
   if (!data) return;
-
-  // Setup UI elements
   swapOrigDataURL = data.imageDataURL;
   swapResultDataURL = null;
   const previewImg = document.getElementById('swapPreviewImg');
@@ -1639,34 +1612,20 @@ function _completeSendToSwapper(mode) {
   const dropContent = document.getElementById('swapDropContent');
   const previewWrap = document.getElementById('swapImagePreview');
   const replaceBtn = document.getElementById('replaceImageBtn');
-
   if (dropContent) dropContent.style.display = 'none';
   if (previewWrap) previewWrap.style.display = 'flex';
   if (replaceBtn) replaceBtn.style.display = 'block';
   if (previewImg) previewImg.src = data.imageDataURL;
   if (previewInfo) previewInfo.textContent = `${data.baseName} · from Extractor`;
-
-  // Load and process image
   const img = new Image();
   img.onload = () => {
     swapImage = img;
     renderSwapPreview(img);
-
-    // Extract colors from image first
-    extractSwapColors(img, {});
-
-    // Then apply palette based on selected mode
-    if (mode === 'base') {
-      applyIncomingPaletteAsBase(data.paletteHex);
-    } else if (mode === 'swapTo') {
-      applyIncomingPaletteAsSwapTo(data.paletteHex);
-    }
-
-    // Refresh preview
+    if (mode === 'base') applyIncomingPaletteAsBase(data.paletteHex);
+    else if (mode === 'swapTo') applyIncomingPaletteAsSwapTo(data.paletteHex);
     renderSwapPreview(img);
   };
   img.src = data.imageDataURL;
-
   window._pendingSendToSwapperData = null;
 }
 
@@ -2051,24 +2010,39 @@ function applyIncomingPaletteAsBase(paletteHex) {
     return;
   }
 
-  const hexColors = paletteHex
-    .map(normalizeHex)
-    .filter(Boolean);
+  // Handle both old format (hex strings) and new format (objects with id, hex, r, g, b)
+  let colors = [];
+  if (typeof paletteHex[0] === 'string') {
+    // Old format: just hex strings
+    colors = paletteHex
+      .map((hex, idx) => {
+        const normalized = normalizeHex(hex);
+        const rgb = hexToRgb(normalized);
+        if (!rgb) return null;
+        return { id: idx + 1, r: rgb.r, g: rgb.g, b: rgb.b };
+      })
+      .filter(Boolean);
+  } else {
+    // New format: objects with id, hex, r, g, b
+    colors = paletteHex.map((item, idx) => ({
+      id: item.id || (idx + 1),
+      r: item.r,
+      g: item.g,
+      b: item.b
+    }));
+  }
 
-  if (!hexColors.length) {
+  if (!colors.length) {
     showToast('Invalid palette colors', true);
     return;
   }
 
-  // Create new swap map with incoming colors as base colors
-  swapColorMap = hexColors.map(hex => {
-    const rgb = hexToRgb(hex);
-    if (!rgb) return null;
-    return {
-      orig: { r: rgb.r, g: rgb.g, b: rgb.b },
-      replacement: { r: rgb.r, g: rgb.g, b: rgb.b }
-    };
-  }).filter(Boolean);
+  // Create new swap map with incoming colors as base colors, preserving IDs
+  swapColorMap = colors.map(color => ({
+    id: color.id,
+    orig: { r: color.r, g: color.g, b: color.b },
+    replacement: { r: color.r, g: color.g, b: color.b }
+  }));
 
   document.getElementById('swapColorCount').textContent = `${swapColorMap.length} colors`;
   document.getElementById('applySwapBtn').disabled = !swapColorMap.length;
@@ -2085,17 +2059,34 @@ function applyIncomingPaletteAsSwapTo(paletteHex) {
     return;
   }
 
-  const hexColors = paletteHex
-    .map(normalizeHex)
-    .filter(Boolean);
+  // Handle both old format (hex strings) and new format (objects with id, hex, r, g, b)
+  let colors = [];
+  if (typeof paletteHex[0] === 'string') {
+    // Old format: just hex strings
+    colors = paletteHex
+      .map((hex, idx) => {
+        const normalized = normalizeHex(hex);
+        const rgb = hexToRgb(normalized);
+        if (!rgb) return null;
+        return { id: idx + 1, r: rgb.r, g: rgb.g, b: rgb.b };
+      })
+      .filter(Boolean);
+  } else {
+    // New format: objects with id, hex, r, g, b
+    colors = paletteHex.map((item, idx) => ({
+      id: item.id || (idx + 1),
+      r: item.r,
+      g: item.g,
+      b: item.b
+    }));
+  }
 
-  if (!hexColors.length) {
+  if (!colors.length) {
     showToast('Invalid palette colors', true);
     return;
   }
 
-  // Keep existing base colors, map incoming palette to replacements
-  const newLength = hexColors.length;
+  const newLength = colors.length;
 
   // Truncate or extend the map to match incoming palette length
   if (swapColorMap.length > newLength) {
@@ -2103,21 +2094,20 @@ function applyIncomingPaletteAsSwapTo(paletteHex) {
   } else if (swapColorMap.length < newLength) {
     // Extend by duplicating the last color or wrapping
     const lastColor = swapColorMap[swapColorMap.length - 1].orig;
+    const lastId = swapColorMap[swapColorMap.length - 1].id || swapColorMap.length;
     while (swapColorMap.length < newLength) {
       swapColorMap.push({
+        id: lastId + (swapColorMap.length - newLength + 1),
         orig: { ...lastColor },
         replacement: { ...lastColor }
       });
     }
   }
 
-  // Apply incoming palette as replacements
-  for (let i = 0; i < swapColorMap.length && i < hexColors.length; i++) {
-    const hex = hexColors[i];
-    const rgb = hexToRgb(hex);
-    if (rgb) {
-      swapColorMap[i].replacement = { r: rgb.r, g: rgb.g, b: rgb.b };
-    }
+  // Apply incoming palette as replacements, preserving IDs
+  for (let i = 0; i < swapColorMap.length && i < colors.length; i++) {
+    swapColorMap[i].id = colors[i].id;
+    swapColorMap[i].replacement = { r: colors[i].r, g: colors[i].g, b: colors[i].b };
   }
 
   document.getElementById('swapColorCount').textContent = `${swapColorMap.length} colors`;
@@ -2185,98 +2175,6 @@ function setSwapExtractionMethod(method, element) {
   }
 }
 
-function kmeansQuantize(imageData, maxColors = 128) {
-  const data = imageData.data;
-  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
-
-  // Collect all non-transparent pixels
-  const pixels = [];
-  for (let i = 0; i < data.length; i += 4) {
-    const a = data[i + 3];
-    if (a < 128) continue;
-    pixels.push({
-      r: data[i],
-      g: data[i + 1],
-      b: data[i + 2]
-    });
-  }
-
-  if (pixels.length === 0) return [];
-  if (pixels.length <= maxColors) return pixels.slice();
-
-  // Initialize cluster centers by sampling pixels
-  const centers = [];
-  const step = Math.ceil(pixels.length / maxColors);
-  for (let i = 0; i < pixels.length && centers.length < maxColors; i += step) {
-    centers.push({ ...pixels[i] });
-  }
-
-  // K-means iterations
-  const maxIterations = 15;
-  for (let iter = 0; iter < maxIterations; iter++) {
-    const clusters = Array(centers.length).fill(null).map(() => []);
-
-    // Assign pixels to nearest center
-    for (const pixel of pixels) {
-      let minDist = Infinity;
-      let bestIdx = 0;
-      for (let j = 0; j < centers.length; j++) {
-        const dr = pixel.r - centers[j].r;
-        const dg = pixel.g - centers[j].g;
-        const db = pixel.b - centers[j].b;
-        const dist = dr * dr + dg * dg + db * db;
-        if (dist < minDist) {
-          minDist = dist;
-          bestIdx = j;
-        }
-      }
-      clusters[bestIdx].push(pixel);
-    }
-
-    // Update centers
-    let moved = false;
-    for (let j = 0; j < centers.length; j++) {
-      if (clusters[j].length === 0) continue;
-      const newCenter = {
-        r: Math.round(clusters[j].reduce((sum, p) => sum + p.r, 0) / clusters[j].length),
-        g: Math.round(clusters[j].reduce((sum, p) => sum + p.g, 0) / clusters[j].length),
-        b: Math.round(clusters[j].reduce((sum, p) => sum + p.b, 0) / clusters[j].length)
-      };
-      if (newCenter.r !== centers[j].r || newCenter.g !== centers[j].g || newCenter.b !== centers[j].b) {
-        moved = true;
-        centers[j] = newCenter;
-      }
-    }
-
-    if (!moved) break;
-  }
-
-  // Count frequencies and sort
-  const colorFreq = new Map();
-  for (const pixel of pixels) {
-    let minDist = Infinity;
-    let bestIdx = 0;
-    for (let j = 0; j < centers.length; j++) {
-      const dr = pixel.r - centers[j].r;
-      const dg = pixel.g - centers[j].g;
-      const db = pixel.b - centers[j].b;
-      const dist = dr * dr + dg * dg + db * db;
-      if (dist < minDist) {
-        minDist = dist;
-        bestIdx = j;
-      }
-    }
-    const key = (centers[bestIdx].r << 16) | (centers[bestIdx].g << 8) | centers[bestIdx].b;
-    colorFreq.set(key, (colorFreq.get(key) || 0) + 1);
-  }
-
-  const result = [...colorFreq.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([key]) => ({ r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff }));
-
-  return result;
-}
-
 function extractSwapColorsLocal(img, options = {}) {
   const c = document.createElement('canvas');
   c.width = img.width; c.height = img.height;
@@ -2288,27 +2186,16 @@ function extractSwapColorsLocal(img, options = {}) {
   const method = options.method || swapExtractionMethod;
 
   if (method === 'kmeans') {
-    sorted = kmeansQuantize(imageData, 128);
+    sorted = (window.PaletteKMeans && typeof window.PaletteKMeans.kmeansQuantize === 'function')
+      ? window.PaletteKMeans.kmeansQuantize(imageData, 128)
+      : [];
   } else {
-    const data = imageData.data;
-    const colorMap = new Map();
-    const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-      if (a < 128) continue;
-      const qr = clamp(Math.round(r / 8) * 8);
-      const qg = clamp(Math.round(g / 8) * 8);
-      const qb = clamp(Math.round(b / 8) * 8);
-      const key = (qr << 16) | (qg << 8) | qb;
-      colorMap.set(key, (colorMap.get(key) || 0) + 1);
-    }
-    sorted = [...colorMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 128)
-      .map(([key]) => ({ r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff }));
+    sorted = (window.PaletteQuantize && typeof window.PaletteQuantize.quantizeImageData === 'function')
+      ? window.PaletteQuantize.quantizeImageData(imageData, 128, 8, false)
+      : [];
   }
 
-  swapColorMap = sorted.map(c => ({ orig: c, replacement: { ...c } }));
+  swapColorMap = sorted.map((c, idx) => ({ id: idx + 1, orig: c, replacement: { ...c } }));
 
   applyIncomingPaletteToSwapMap(options);
 
@@ -2334,7 +2221,8 @@ async function extractSwapColorsBackend(options = {}) {
   const colors = Array.isArray(data.colors) ? data.colors : [];
   const limited = colors.slice(0, maxColors);
 
-  swapColorMap = limited.map(c => ({
+  swapColorMap = limited.map((c, idx) => ({
+    id: idx + 1,
     orig: { r: c.r, g: c.g, b: c.b },
     replacement: { r: c.r, g: c.g, b: c.b }
   }));
@@ -2392,9 +2280,10 @@ function renderSwapList() {
   list.innerHTML = '';
 
   swapColorMap.forEach((entry, idx) => {
-    const { orig, replacement } = entry;
+    const { orig, replacement, id } = entry;
     const origHex = toHex(orig.r, orig.g, orig.b);
     const newHex  = toHex(replacement.r, replacement.g, replacement.b);
+    const colorId = id || (idx + 1);
 
     const row = document.createElement('div');
     row.className = 'swap-color-row';
@@ -2478,10 +2367,10 @@ function renderSwapList() {
       }
     });
 
-    // Original hex label
+    // Original hex label with ID
     const origLabel = document.createElement('span');
     origLabel.className = 'swap-hex-label';
-    origLabel.textContent = origHex;
+    origLabel.textContent = `${colorId}: ${origHex}`;
 
     // Editable new hex label
     const hexLabel = document.createElement('input');
@@ -2534,6 +2423,10 @@ function handleDrop(e) {
   if (dragSrcIdx !== null && dragSrcIdx !== targetIdx) {
     const item = swapColorMap.splice(dragSrcIdx, 1)[0];
     swapColorMap.splice(targetIdx, 0, item);
+    // Reassign IDs based on new order (1, 2, 3, ...)
+    swapColorMap.forEach((entry, index) => {
+      entry.id = index + 1;
+    });
     saveHistory(); renderSwapList();
   }
   dragSrcIdx = null;

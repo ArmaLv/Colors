@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-palette_server.py — Palette Swapper Backend
-Run: python palette_server.py
+colors.py — Palette Swapper Backend Server
+Extraction, color swapping, and favicon customization endpoints.
+Run: python colors.py
 Requires: pip install flask pillow
 """
 
 import base64
 import io
-import json
 import math
 import os
+import subprocess
 import sys
 
 try:
     from flask import Flask, request, jsonify, send_from_directory
 except ImportError:
     print("Flask not found. Installing...")
-    import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
     from flask import Flask, request, jsonify, send_from_directory
 
@@ -24,13 +24,21 @@ try:
     from PIL import Image
 except ImportError:
     print("Pillow not found. Installing...")
-    import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "Pillow"])
     from PIL import Image
 
+# Configuration
 HOST = os.environ.get("PALETTE_HOST", "localhost")
 PORT = int(os.environ.get("PALETTE_PORT", 5050))
 DEBUG = os.environ.get("PALETTE_DEBUG", "false").lower() == "true"
+
+# Magic numbers / algorithm parameters
+COLOR_QUANTIZATION_STEP = 4      # Quantize to nearest multiple of 4
+ALPHA_THRESHOLD = 128             # Minimum alpha value to process
+DEFAULT_MAX_COLORS = 256          # Default max colors for extraction
+DEFAULT_TOLERANCE = 10            # Default color matching tolerance
+FAVICON_TOLERANCE = 30            # Tolerance for favicon color swapping
+PREVIEW_MAX_SIZE = 400            # Maximum dimension for preview images
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
@@ -45,28 +53,28 @@ def color_distance(c1, c2):
 
 
 def swap_colors(img: Image.Image, mappings: list, tolerance: int) -> Image.Image:
-    """Replace colors in img according to mappings."""
+    """Replace colors in img according to mappings within tolerance threshold."""
     img = img.convert("RGBA")
     pixels = img.load()
     w, h = img.size
 
-    froms = [(tuple(m["from"]), tuple(m["to"])) for m in mappings]
+    color_map = [(tuple(m["from"]), tuple(m["to"])) for m in mappings]
 
     for y in range(h):
         for x in range(w):
-            px = pixels[x, y]
-            rgb = px[:3]
+            pixel = pixels[x, y]
+            rgb = pixel[:3]
             best_dist = float("inf")
-            best_to = None
+            replacement = None
 
-            for from_rgb, to_rgb in froms:
-                d = color_distance(rgb, from_rgb)
-                if d <= tolerance and d < best_dist:
-                    best_dist = d
-                    best_to = to_rgb
+            for original_rgb, target_rgb in color_map:
+                distance = color_distance(rgb, original_rgb)
+                if distance <= tolerance and distance < best_dist:
+                    best_dist = distance
+                    replacement = target_rgb
 
-            if best_to is not None:
-                pixels[x, y] = (*best_to, px[3])
+            if replacement is not None:
+                pixels[x, y] = (*replacement, pixel[3])
 
     return img
 
@@ -93,7 +101,7 @@ def swap():
     except Exception:
         return jsonify({"error": "invalid JSON"}), 400
 
-    if not data:
+    if data is None or not data:
         return jsonify({"error": "no data provided"}), 400
 
     img_data = data.get("image", "")
@@ -110,21 +118,19 @@ def swap():
         return jsonify({"error": f"image decode failed: {e}"}), 400
 
     mappings = data.get("mappings", [])
-    tolerance = int(data.get("tolerance", 10))
+    tolerance = int(data.get("tolerance", DEFAULT_TOLERANCE))
     output_format = data.get("format", "png").lower()
     quality = int(data.get("quality", 95))
 
-    # Optional preview mode: downscale image on the backend for quicker responses.
-    # This is used by the live preview in the Palette Swapper so heavy work happens
-    # in the desktop Python process instead of the browser JS thread.
+    # Preview mode: downscale image on backend for quicker live preview responses.
+    # Delegates heavy lifting to Python process instead of browser JS thread.
     preview = bool(data.get("preview", False))
-    preview_max = int(data.get("preview_max", 0)) or 0
+    preview_max = int(data.get("preview_max", 0)) or PREVIEW_MAX_SIZE
     if preview:
-        max_dim = preview_max or 400
         try:
-            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            img.thumbnail((preview_max, preview_max), Image.LANCZOS)
         except Exception:
-            img.thumbnail((max_dim, max_dim))
+            img.thumbnail((preview_max, preview_max))
 
     supported_formats = ["png", "jpg", "jpeg", "webp"]
     if output_format not in supported_formats:
@@ -164,6 +170,9 @@ def extract():
     except Exception:
         return jsonify({"error": "invalid JSON"}), 400
 
+    if data is None:
+        return jsonify({"error": "no data provided"}), 400
+
     img_data = data.get("image", "")
     if not img_data:
         return jsonify({"error": "no image provided"}), 400
@@ -177,25 +186,26 @@ def extract():
     except Exception as e:
         return jsonify({"error": f"image decode failed: {e}"}), 400
 
-    max_colors = int(data.get("max_colors", 256))
+    max_colors = int(data.get("max_colors", DEFAULT_MAX_COLORS))
     img = img.convert("RGBA")
     pixels = img.load()
     w, h = img.size
 
-    color_map = {}
+    color_freq = {}
     for y in range(h):
         for x in range(w):
-            px = pixels[x, y]
-            if px[3] < 128:
+            pixel = pixels[x, y]
+            if pixel[3] < ALPHA_THRESHOLD:
                 continue
-            r, g, b = px[0], px[1], px[2]
-            qr = round(r / 4) * 4
-            qg = round(g / 4) * 4
-            qb = round(b / 4) * 4
+            r, g, b = pixel[0], pixel[1], pixel[2]
+            # Quantize color to nearest step size
+            qr = int(round(r / COLOR_QUANTIZATION_STEP) * COLOR_QUANTIZATION_STEP)
+            qg = int(round(g / COLOR_QUANTIZATION_STEP) * COLOR_QUANTIZATION_STEP)
+            qb = int(round(b / COLOR_QUANTIZATION_STEP) * COLOR_QUANTIZATION_STEP)
             key = (qr << 16) | (qg << 8) | qb
-            color_map[key] = color_map.get(key, 0) + 1
+            color_freq[key] = color_freq.get(key, 0) + 1
 
-    sorted_colors = sorted(color_map.items(), key=lambda x: x[1], reverse=True)[:max_colors]
+    sorted_colors = sorted(color_freq.items(), key=lambda x: x[1], reverse=True)[:max_colors]
     colors = [
         {
             "r": (key >> 16) & 0xFF,
@@ -217,22 +227,25 @@ def swap_favicon():
     except Exception:
         return jsonify({"error": "invalid JSON"}), 400
 
+    if data is None:
+        return jsonify({"error": "no data provided"}), 400
+
     target_colors = data.get("colors", [])
     if len(target_colors) < 10:
         return jsonify({"error": "need 10 target colors"}), 400
 
-    # The original favicon colors to be replaced (in RGB tuples)
+    # Original favicon palette (10 base colors in RGB tuples)
     base_colors = [
-        (0x00, 0x00, 0x00), #000000
-        (0xac, 0x54, 0x38), #ac5438
-        (0xff, 0xf0, 0xe8), #fff0e8
-        (0xff, 0xcc, 0xac), #ffccac
-        (0x60, 0x58, 0x50), #605850
-        (0x1c, 0x2c, 0x54), #1c2c54
-        (0xc4, 0xc4, 0xc8), #c4c4c8
-        (0x84, 0x78, 0x9c), #84789c
-        (0x80, 0x24, 0x54), #802454
-        (0xff, 0x78, 0xa8), #ff78a8
+        (0x00, 0x00, 0x00),  # #000000 - black
+        (0xac, 0x54, 0x38),  # #ac5438 - dark red-brown
+        (0xff, 0xf0, 0xe8),  # #fff0e8 - pale cream
+        (0xff, 0xcc, 0xac),  # #ffccac - pale orange
+        (0x60, 0x58, 0x50),  # #605850 - dark gray
+        (0x1c, 0x2c, 0x54),  # #1c2c54 - dark blue
+        (0xc4, 0xc4, 0xc8),  # #c4c4c8 - light gray
+        (0x84, 0x78, 0x9c),  # #84789c - muted purple
+        (0x80, 0x24, 0x54),  # #802454 - dark magenta
+        (0xff, 0x78, 0xa8),  # #ff78a8 - bright pink
     ]
 
     target_rgb = []
@@ -258,7 +271,7 @@ def swap_favicon():
     for base, target in zip(base_colors, target_rgb):
         mappings.append({"from": base, "to": target})
 
-    tolerance = int(data.get("tolerance", 30))
+    tolerance = int(data.get("tolerance", FAVICON_TOLERANCE))
     try:
         result_img = swap_colors(img, mappings, tolerance)
     except Exception as e:
