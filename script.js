@@ -76,7 +76,11 @@ function generateAutoTheme(palette) {
     return null;
   }
   
-  const colors = palette.colors.map(c => normalizeHex(c)).filter(Boolean);
+  // Support both old (string) and new (object with id) formats
+  const colors = palette.colors.map(c => {
+    if (typeof c === 'string') return normalizeHex(c);
+    return normalizeHex(c.hex || c);
+  }).filter(Boolean);
   if (colors.length === 0) return null;
 
   const getLuminance = (hex) => {
@@ -314,7 +318,9 @@ async function updateFavicon() {
 
   const activePalette = getActivePalette();
   if (activePalette && activePalette.colors && activePalette.colors.length > 0) {
-    palette = activePalette.colors.map(hex => {
+    palette = activePalette.colors.map(c => {
+      // Support both old (string) and new (object with id) formats
+      const hex = typeof c === 'string' ? c : (c.hex || c);
       const rgb = hexToRgb(hex);
       return rgb || { r: 255, g: 255, b: 255 };
     });
@@ -575,9 +581,11 @@ function updatePaletteInPlace(id, partial, { updateList = true, persist = true }
       strip.innerHTML = '';
       const colors = partial.colors.slice(0, 24);
       if (colors.length) {
-        colors.forEach(h => {
+        colors.forEach(c => {
+          // Support both old (string) and new (object with id) formats
+          const hex = typeof c === 'string' ? c : (c.hex || c);
           const s = document.createElement('span');
-          s.style.background = normalizeHex(h) || '#000000';
+          s.style.background = normalizeHex(hex) || '#000000';
           strip.appendChild(s);
         });
       } else {
@@ -624,7 +632,11 @@ function renderPalettesTab() {
   const filtered = savedPalettes.filter(p => {
     if (!q) return true;
     const name = (p.name || '').toLowerCase();
-    const colors = Array.isArray(p.colors) ? p.colors.join(' ') : '';
+    // Support both old (string) and new (object with id) formats for search
+    const colors = Array.isArray(p.colors) ? p.colors.map(c => {
+      if (typeof c === 'string') return c;
+      return c.hex || c;
+    }).join(' ') : '';
     return name.includes(q) || colors.toLowerCase().includes(q);
   });
 
@@ -658,9 +670,11 @@ function renderPalettesTab() {
       strip.className = 'palette-card-strip';
       const colors = (Array.isArray(p.colors) ? p.colors : []).slice(0, 24);
       if (colors.length) {
-        colors.forEach(h => {
+        colors.forEach(c => {
+          // Support both old (string) and new (object with id) formats
+          const hex = typeof c === 'string' ? c : (c.hex || c);
           const s = document.createElement('span');
-          s.style.background = normalizeHex(h) || '#000000';
+          s.style.background = normalizeHex(hex) || '#000000';
           strip.appendChild(s);
         });
       } else {
@@ -737,7 +751,10 @@ function renderPaletteEditor() {
       onConfirm: hex => {
         const h = normalizeHex(hex);
         if (!h) return;
-        p.colors = [...(Array.isArray(p.colors) ? p.colors : []), h];
+        const currentColors = Array.isArray(p.colors) ? p.colors : [];
+        const nextId = currentColors.length + 1;
+        const newColor = { id: nextId, hex: h };
+        p.colors = [...currentColors, newColor];
         upsertPalette({ ...p });
         showToast('Color added');
       }
@@ -792,7 +809,17 @@ function renderPaletteEditor() {
 
   let dragIdx = null;
 
-  colors.forEach((hex, idx) => {
+  // Convert old format (string) to new format (object with hex and id) for backward compatibility
+  const normalizedColors = colors.map((c, idx) => {
+    if (typeof c === 'string') {
+      return { id: (p.nextColorId || 0) + idx + 1, hex: c };
+    }
+    return c;
+  });
+
+  normalizedColors.forEach((colorObj, idx) => {
+    const hex = colorObj.hex || colorObj;
+    const colorId = colorObj.id || (idx + 1);
     const item = document.createElement('div');
     item.className = 'palette-color-item';
     item.draggable = true;
@@ -829,8 +856,8 @@ function renderPaletteEditor() {
         onConfirm: newHex => {
           const h = normalizeHex(newHex);
           if (!h) return;
-          const next = [...colors];
-          next[idx] = h;
+          const next = [...normalizedColors];
+          next[idx] = { id: colorId, hex: h };
           p.colors = next;
           upsertPalette({ ...p });
           showToast('Color updated');
@@ -845,9 +872,9 @@ function renderPaletteEditor() {
     input.maxLength = 7;
     input.addEventListener('change', () => {
       const h = normalizeHex(input.value);
-      if (!h) { input.value = normalizeHex(colors[idx]) || ''; return; }
-      const next = [...colors];
-      next[idx] = h;
+      if (!h) { input.value = normalizeHex(hex) || ''; return; }
+      const next = [...normalizedColors];
+      next[idx] = { id: colorId, hex: h };
       p.colors = next;
       upsertPalette({ ...p });
     });
@@ -857,7 +884,7 @@ function renderPaletteEditor() {
     rm.textContent = '×';
     rm.title = 'Remove color';
     rm.onclick = () => {
-      const next = colors.filter((_, i) => i !== idx);
+      const next = normalizedColors.filter((_, i) => i !== idx);
       p.colors = next;
       upsertPalette({ ...p });
     };
@@ -876,9 +903,13 @@ function renderPaletteEditor() {
       e.preventDefault();
       const targetIdx = parseInt(item.dataset.idx, 10);
       if (dragIdx === null || isNaN(targetIdx) || dragIdx === targetIdx) return;
-      const next = [...colors];
+      const next = [...normalizedColors];
       const [moved] = next.splice(dragIdx, 1);
       next.splice(targetIdx, 0, moved);
+      // Reassign IDs based on new order (1, 2, 3, ...)
+      next.forEach((color, index) => {
+        color.id = index + 1;
+      });
       p.colors = next;
       upsertPalette({ ...p });
       showToast('Reordered');
@@ -900,7 +931,8 @@ function createNewPalette() {
     colors: [],
     source: 'custom',
     createdAt: Date.now(),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    nextColorId: 1
   };
   activePaletteId = p.id;
   upsertPalette(p);
@@ -949,14 +981,24 @@ function importPalettesJSON(event) {
         .map(p => {
           const id = typeof p.id === 'string' && p.id.trim() ? p.id : newId('p');
           const name = typeof p.name === 'string' ? p.name : 'Untitled';
-          const colors = Array.isArray(p.colors) ? p.colors.map(normalizeHex).filter(Boolean) : [];
+          let colors = [];
+          if (Array.isArray(p.colors)) {
+            colors = p.colors.map((c, idx) => {
+              // Support both old (string) and new (object) formats
+              if (typeof c === 'string') {
+                return { id: idx + 1, hex: normalizeHex(c) };
+              }
+              return { id: c.id || (idx + 1), hex: normalizeHex(c.hex || c) };
+            }).filter(c => c.hex);
+          }
           return {
             id,
             name,
             colors,
             source: p.source || 'import',
             createdAt: typeof p.createdAt === 'number' ? p.createdAt : Date.now(),
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            nextColorId: colors.length + 1
           };
         })
         .filter(p => p.colors.length || (p.name && p.name.trim()));
@@ -1006,8 +1048,22 @@ function applyPaletteToSwapper(paletteId) {
     return;
   }
   const p = savedPalettes.find(x => x.id === paletteId);
-  const colors = p && Array.isArray(p.colors) ? p.colors.map(normalizeHex).filter(Boolean) : [];
-  if (!colors.length) { showToast('Palette is empty', true); return; }
+  if (!p || !Array.isArray(p.colors) || p.colors.length === 0) { 
+    showToast('Palette is empty', true); 
+    return; 
+  }
+  
+  // Support both old (string) and new (object with id) formats
+  let colorsWithIds = p.colors.map((c, idx) => {
+    if (typeof c === 'string') {
+      return { id: idx + 1, hex: normalizeHex(c) };
+    }
+    return { id: c.id || (idx + 1), hex: normalizeHex(c.hex || c) };
+  }).filter(c => c.hex);
+  
+  // Sort by ID to maintain correct order
+  colorsWithIds.sort((a, b) => a.id - b.id);
+  const colors = colorsWithIds.map(c => c.hex);
 
   swapColorMap.forEach((e, i) => {
     const h = colors[i % colors.length];
@@ -1206,7 +1262,11 @@ function saveExtractorPaletteToPalettes() {
   if (!extractedColors.length) { showToast('Extract a palette first', true); return; }
   const rawName = document.getElementById('paletteFilename')?.value || 'from_extractor';
   const name = rawName.trim() || 'from_extractor';
-  const colors = sortColors(extractedColors).map(c => toHex(c.r, c.g, c.b).toUpperCase());
+  const sorted = sortColors(extractedColors);
+  const colors = sorted.map((c, idx) => ({
+    id: c.id || (idx + 1),
+    hex: toHex(c.r, c.g, c.b).toUpperCase()
+  }));
   const p = {
     id: newId('p'),
     name,
@@ -1486,7 +1546,18 @@ async function downloadActivePalette() {
   if (!base) return;
   const safeName = base.replace(/[^a-zA-Z0-9_\-]/g, '_') || 'palette';
   
-  const colors = p.colors.map(c => normalizeHex(c)).filter(Boolean);
+  // Support both old (string) and new (object with id) formats
+  let colorsWithIds = p.colors.map((c, idx) => {
+    if (typeof c === 'string') {
+      return { id: idx + 1, hex: normalizeHex(c) };
+    }
+    return { id: c.id || (idx + 1), hex: normalizeHex(c.hex || c) };
+  }).filter(c => c.hex);
+  
+  // Sort by ID to maintain correct order
+  colorsWithIds.sort((a, b) => a.id - b.id);
+  
+  const colors = colorsWithIds.map(c => c.hex);
   if (colors.length === 0) return;
   
   const parseHex = (hex) => {
