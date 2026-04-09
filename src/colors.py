@@ -32,6 +32,10 @@ HOST = os.environ.get("PALETTE_HOST", "localhost")
 PORT = int(os.environ.get("PALETTE_PORT", 5050))
 DEBUG = os.environ.get("PALETTE_DEBUG", "false").lower() == "true"
 
+# Determine the base directory relative to this script
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_FOLDER = os.path.join(BASE_DIR, "public")
+
 # Magic numbers / algorithm parameters
 COLOR_QUANTIZATION_STEP = 4      # Quantize to nearest multiple of 4
 ALPHA_THRESHOLD = 128             # Minimum alpha value to process
@@ -40,7 +44,7 @@ DEFAULT_TOLERANCE = 10            # Default color matching tolerance
 FAVICON_TOLERANCE = 30            # Tolerance for favicon color swapping
 PREVIEW_MAX_SIZE = 400            # Maximum dimension for preview images
 
-app = Flask(__name__, static_folder="../public", static_url_path="")
+app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path="")
 
 
 def color_distance(c1, c2):
@@ -81,12 +85,12 @@ def swap_colors(img: Image.Image, mappings: list, tolerance: int) -> Image.Image
 
 @app.route("/")
 def index():
-    return send_from_directory("../public", "index.html")
+    return send_from_directory(STATIC_FOLDER, "index.html")
 
 
 @app.route("/<path:filename>")
 def static_files(filename):
-    return send_from_directory("../public", filename)
+    return send_from_directory(STATIC_FOLDER, filename)
 
 
 @app.route("/ping")
@@ -257,7 +261,7 @@ def swap_favicon():
         for c in target_colors[:10]
     ]
 
-    favicon_png = os.path.join(os.path.dirname(__file__), "../public/favicon-source.png")
+    favicon_png = os.path.join(BASE_DIR, "public", "favicon-source.png")
 
     if not os.path.exists(favicon_png):
         return jsonify({"error": "favicon-source.png not found"}), 404
