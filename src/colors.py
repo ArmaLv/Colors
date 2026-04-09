@@ -128,7 +128,9 @@ def swap():
     preview_max = int(data.get("preview_max", 0)) or PREVIEW_MAX_SIZE
     if preview:
         try:
-            img.thumbnail((preview_max, preview_max), Image.LANCZOS)
+            # Handle LANCZOS location difference between Pillow versions
+            resample = getattr(Image, 'Resampling', Image).LANCZOS
+            img.thumbnail((preview_max, preview_max), resample)
         except Exception:
             img.thumbnail((preview_max, preview_max))
 
@@ -230,7 +232,7 @@ def swap_favicon():
     if data is None:
         return jsonify({"error": "no data provided"}), 400
 
-    target_colors = data.get("colors", [])
+    target_colors = data.get("colors") or []
     if len(target_colors) < 10:
         return jsonify({"error": "need 10 target colors"}), 400
 
@@ -248,14 +250,12 @@ def swap_favicon():
         (0xff, 0x78, 0xa8),  # #ff78a8 - bright pink
     ]
 
-    target_rgb = []
-    for c in target_colors[:10]:
-        if isinstance(c, dict):
-            target_rgb.append((c.get("r", 0), c.get("g", 0), c.get("b", 0)))
-        elif isinstance(c, (list, tuple)) and len(c) >= 3:
-            target_rgb.append((c[0], c[1], c[2]))
-        else:
-            target_rgb.append((0, 0, 0))
+    target_rgb = [
+        (c.get("r", 0), c.get("g", 0), c.get("b", 0)) if isinstance(c, dict) else
+        (c[0], c[1], c[2]) if isinstance(c, (list, tuple)) and len(c) >= 3 else
+        (0, 0, 0)
+        for c in target_colors[:10]
+    ]
 
     favicon_png = os.path.join(os.path.dirname(__file__), "../public/favicon-source.png")
 
