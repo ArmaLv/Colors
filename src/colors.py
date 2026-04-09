@@ -40,7 +40,7 @@ DEFAULT_TOLERANCE = 10            # Default color matching tolerance
 FAVICON_TOLERANCE = 30            # Tolerance for favicon color swapping
 PREVIEW_MAX_SIZE = 400            # Maximum dimension for preview images
 
-app = Flask(__name__, static_folder=".", static_url_path="")
+app = Flask(__name__, static_folder="../public", static_url_path="")
 
 
 def color_distance(c1, c2):
@@ -81,12 +81,12 @@ def swap_colors(img: Image.Image, mappings: list, tolerance: int) -> Image.Image
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    return send_from_directory("../public", "index.html")
 
 
 @app.route("/<path:filename>")
 def static_files(filename):
-    return send_from_directory(".", filename)
+    return send_from_directory("../public", filename)
 
 
 @app.route("/ping")
@@ -257,7 +257,7 @@ def swap_favicon():
         else:
             target_rgb.append((0, 0, 0))
 
-    favicon_png = os.path.join(os.path.dirname(__file__), "favicon-source.png")
+    favicon_png = os.path.join(os.path.dirname(__file__), "../public/favicon-source.png")
 
     if not os.path.exists(favicon_png):
         return jsonify({"error": "favicon-source.png not found"}), 404
