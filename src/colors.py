@@ -88,6 +88,16 @@ def index():
     return send_from_directory(STATIC_FOLDER, "index.html")
 
 
+@app.route("/src/<path:filename>")
+def serve_src(filename):
+    return send_from_directory(os.path.join(BASE_DIR, "src"), filename)
+
+
+@app.route("/styles/<path:filename>")
+def serve_styles(filename):
+    return send_from_directory(os.path.join(BASE_DIR, "styles"), filename)
+
+
 @app.route("/<path:filename>")
 def static_files(filename):
     return send_from_directory(STATIC_FOLDER, filename)
