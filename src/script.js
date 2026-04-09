@@ -721,6 +721,8 @@ function renderPaletteEditor() {
     empty.innerHTML = 'Select a palette to edit, or click <strong>New</strong>.';
     editor.appendChild(empty);
     document.getElementById('palettesDownloadBar').style.display = 'none';
+    const importArea = document.getElementById('palettesImportArea');
+    if (importArea) importArea.style.display = 'none';
     return;
   }
 
@@ -728,6 +730,8 @@ function renderPaletteEditor() {
   if (countEl) countEl.textContent = `${colors.length} colors`;
   
   document.getElementById('palettesDownloadBar').style.display = 'flex';
+  const importArea = document.getElementById('palettesImportArea');
+  if (importArea) importArea.style.display = 'block';
   updatePalettesExportInfo();
 
   const row = document.createElement('div');
@@ -996,6 +1000,66 @@ function createNewPalette() {
   activePaletteId = p.id;
   upsertPalette(p);
   showToast('Palette created');
+}
+
+function importColorsFromText() {
+  const textarea = document.getElementById('colorTextInput');
+  if (!textarea) return;
+  
+  const text = textarea.value.trim();
+  if (!text) {
+    showToast('Paste color data first', true);
+    return;
+  }
+
+  const p = getActivePalette();
+  if (!p) {
+    showToast('Select or create a palette first', true);
+    return;
+  }
+
+  // Parse lines: #hexcode (note) or just #hexcode
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  const newColors = [];
+  let parseCount = 0;
+
+  lines.forEach((line, idx) => {
+    // Match hex code at start of line
+    const hexMatch = line.match(/^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?/);
+    if (!hexMatch) return;
+
+    const hex = normalizeHex(hexMatch[0]);
+    if (!hex) return;
+
+    // Extract note from parentheses if present
+    const noteMatch = line.match(/\(([^)]*)\)/);
+    const note = noteMatch ? noteMatch[1] : '';
+
+    newColors.push({
+      id: (p.colors?.length || 0) + parseCount + 1,
+      hex: hex,
+      note: note
+    });
+    parseCount++;
+  });
+
+  if (parseCount === 0) {
+    showToast('No valid colors found. Use format: #hexcode (note)', true);
+    return;
+  }
+
+  // Add to palette
+  const updated = [...(Array.isArray(p.colors) ? p.colors : []), ...newColors];
+  p.colors = updated;
+  upsertPalette({ ...p });
+
+  textarea.value = '';
+  showToast(`Imported ${parseCount} color${parseCount !== 1 ? 's' : ''}`);
+}
+
+function clearTextInput() {
+  const textarea = document.getElementById('colorTextInput');
+  if (textarea) textarea.value = '';
 }
 
 async function exportPalettesJSON() {

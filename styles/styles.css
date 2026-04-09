@@ -836,6 +836,16 @@ canvas { display: none; }
   flex-shrink: 0;
 }
 
+.palettes-import-area {
+  display: flex;
+  flex-direction: column;
+}
+
+.color-text-input:focus {
+  border-color: var(--accent) !important;
+  background: rgba(232, 255, 71, 0.02) !important;
+}
+
 .swap-sidebar {
   border-right: 1px solid var(--border);
   display: flex;
