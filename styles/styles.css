@@ -772,6 +772,70 @@ canvas { display: none; }
   transform: scale(0.95);
 }
 
+.palette-colors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.palette-color-item.list-view {
+  flex-direction: row;
+  align-items: center;
+  height: auto;
+  padding: 10px;
+  justify-content: space-between;
+}
+
+.palette-color-item.list-view .palette-color-swatch {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  order: 1;
+  flex-shrink: 0;
+}
+
+.palette-color-item.list-view .palette-color-hex {
+  order: 2;
+  flex: 0 0 auto;
+  width: 80px;
+  text-align: center;
+}
+
+.palette-color-note {
+  flex: 1;
+  min-width: 150px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-family: 'Space Mono', monospace;
+  font-size: 0.62rem;
+  padding: 4px 6px;
+  border-radius: 3px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.palette-color-note:hover {
+  border-color: var(--border);
+  background: rgba(255,255,255,0.03);
+}
+
+.palette-color-note:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: rgba(232,255,71,0.05);
+}
+
+.palette-color-item.list-view .palette-color-note {
+  order: 3;
+  flex: 1;
+  min-width: 200px;
+}
+
+.palette-color-item.list-view .palette-color-remove {
+  order: 4;
+  flex-shrink: 0;
+}
+
 .swap-sidebar {
   border-right: 1px solid var(--border);
   display: flex;

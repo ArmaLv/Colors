@@ -4,8 +4,10 @@ let scanlineOn = true;
 const PALETTES_STATE_KEY = 'palette_saved_palettes_v1';
 const SCANLINE_STATE_KEY = 'palette_scanline_v1';
 const CANVAS_THEME_KEY = 'palette_canvas_theme_v1';
+const PALETTES_VIEW_MODE_KEY = 'palette_view_mode_v1';
 let savedPalettes = [];
 let activePaletteId = null;
+let palettesViewMode = 'grid'; // 'grid' or 'list'
 const debouncedPersistPalettes = debounce(() => {
   persistSavedPalettes();
   refreshSwapperPalettesDropdown();
@@ -557,6 +559,17 @@ function persistSavedPalettes() {
   }
 }
 
+function loadPalettesViewMode() {
+  try {
+    const saved = localStorage.getItem(PALETTES_VIEW_MODE_KEY);
+    if (saved === 'grid' || saved === 'list') {
+      palettesViewMode = saved;
+    }
+  } catch (err) {
+    console.error('loadPalettesViewMode failed', err);
+  }
+}
+
 function cssEscapeSafe(s) {
   try {
     if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
@@ -798,31 +811,49 @@ function renderPaletteEditor() {
     showToast('Palette deleted');
   };
 
+  const viewToggleBtn = document.createElement('button');
+  viewToggleBtn.className = 'sort-btn';
+  viewToggleBtn.textContent = palettesViewMode === 'grid' ? '≡ List' : '░ Grid';
+  viewToggleBtn.onclick = () => {
+    palettesViewMode = palettesViewMode === 'grid' ? 'list' : 'grid';
+    try {
+      localStorage.setItem(PALETTES_VIEW_MODE_KEY, palettesViewMode);
+    } catch (err) {
+      console.error('Failed to save view mode', err);
+    }
+    renderPaletteEditor();
+  };
+
   actions.appendChild(addBtn);
   actions.appendChild(useBtn);
   actions.appendChild(dupBtn);
   actions.appendChild(delBtn);
+  actions.appendChild(viewToggleBtn);
   editor.appendChild(actions);
 
-  const grid = document.createElement('div');
-  grid.className = 'palette-colors-grid';
+  const container = document.createElement('div');
+  container.className = palettesViewMode === 'grid' ? 'palette-colors-grid' : 'palette-colors-list';
 
   let dragIdx = null;
 
   // Convert old format (string) to new format (object with hex and id) for backward compatibility
   const normalizedColors = colors.map((c, idx) => {
     if (typeof c === 'string') {
-      return { id: (p.nextColorId || 0) + idx + 1, hex: c };
+      return { id: (p.nextColorId || 0) + idx + 1, hex: c, note: '' };
     }
-    return c;
+    return { ...c, note: c.note || '' };
   });
 
   normalizedColors.forEach((colorObj, idx) => {
     const hex = colorObj.hex || colorObj;
     const colorId = colorObj.id || (idx + 1);
+    const note = colorObj.note || '';
     const item = document.createElement('div');
     item.className = 'palette-color-item';
-    item.draggable = true;
+    if (palettesViewMode === 'list') {
+      item.classList.add('list-view');
+    }
+    item.draggable = palettesViewMode === 'grid';
     item.dataset.idx = idx;
 
     const sw = document.createElement('div');
@@ -857,7 +888,7 @@ function renderPaletteEditor() {
           const h = normalizeHex(newHex);
           if (!h) return;
           const next = [...normalizedColors];
-          next[idx] = { id: colorId, hex: h };
+          next[idx] = { id: colorId, hex: h, note: note };
           p.colors = next;
           upsertPalette({ ...p });
           showToast('Color updated');
@@ -874,7 +905,19 @@ function renderPaletteEditor() {
       const h = normalizeHex(input.value);
       if (!h) { input.value = normalizeHex(hex) || ''; return; }
       const next = [...normalizedColors];
-      next[idx] = { id: colorId, hex: h };
+      next[idx] = { id: colorId, hex: h, note: note };
+      p.colors = next;
+      upsertPalette({ ...p });
+    });
+
+    const noteInput = document.createElement('input');
+    noteInput.className = 'palette-color-note';
+    noteInput.type = 'text';
+    noteInput.placeholder = palettesViewMode === 'list' ? 'Add note...' : '';
+    noteInput.value = note;
+    noteInput.addEventListener('change', () => {
+      const next = [...normalizedColors];
+      next[idx] = { id: colorId, hex: h, note: noteInput.value };
       p.colors = next;
       upsertPalette({ ...p });
     });
@@ -917,11 +960,27 @@ function renderPaletteEditor() {
 
     item.appendChild(sw);
     item.appendChild(input);
+    if (palettesViewMode === 'list') {
+      item.appendChild(noteInput);
+    }
     item.appendChild(rm);
-    grid.appendChild(item);
+    
+    // Add note input to grid view (hidden by default, visible on hover)
+    if (palettesViewMode === 'grid') {
+      noteInput.style.display = 'none';
+      item.addEventListener('mouseenter', () => {
+        noteInput.style.display = 'block';
+      });
+      item.addEventListener('mouseleave', () => {
+        noteInput.style.display = 'none';
+      });
+      item.appendChild(noteInput);
+    }
+    
+    container.appendChild(item);
   });
 
-  editor.appendChild(grid);
+  editor.appendChild(container);
 }
 
 function createNewPalette() {
@@ -1265,7 +1324,8 @@ function saveExtractorPaletteToPalettes() {
   const sorted = sortColors(extractedColors);
   const colors = sorted.map((c, idx) => ({
     id: c.id || (idx + 1),
-    hex: toHex(c.r, c.g, c.b).toUpperCase()
+    hex: toHex(c.r, c.g, c.b).toUpperCase(),
+    note: ''
   }));
   const p = {
     id: newId('p'),
@@ -2330,7 +2390,11 @@ async function saveSwapperPaletteToPalettes() {
     paletteId = newId('p');
   }
   
-  const colors = swapColorMap.map(e => toHex(e.replacement.r, e.replacement.g, e.replacement.b).toUpperCase());
+  const colors = swapColorMap.map((e, idx) => ({
+    id: e.id || (idx + 1),
+    hex: toHex(e.replacement.r, e.replacement.g, e.replacement.b).toUpperCase(),
+    note: ''
+  }));
   const p = {
     id: paletteId,
     name: name.trim(),
@@ -3406,6 +3470,7 @@ function restoreSwapState() {
 
 refreshPresetDropdown();
 loadSavedPalettes();
+loadPalettesViewMode();
 renderPalettesTab();
 initThemeCarousel();
 restoreLayoutState();
