@@ -1018,22 +1018,37 @@ function importColorsFromText() {
     return;
   }
 
-  // Parse lines: #hexcode (note) or just #hexcode
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  // Parse lines: supports multiple formats
+  // - #hexcode (note)
+  // - #hexcode
+  // - $var: #hexcode; // comment
+  // - #hexcode // comment
+  const lines = text.split('\n').filter(Boolean);
   const newColors = [];
   let parseCount = 0;
 
-  lines.forEach((line, idx) => {
-    // Match hex code at start of line
-    const hexMatch = line.match(/^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?/);
+  lines.forEach((line) => {
+    // Find hex code anywhere in the line (not just at start)
+    const hexMatch = line.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/i);
     if (!hexMatch) return;
 
     const hex = normalizeHex(hexMatch[0]);
     if (!hex) return;
 
-    // Extract note from parentheses if present
-    const noteMatch = line.match(/\(([^)]*)\)/);
-    const note = noteMatch ? noteMatch[1] : '';
+    // Extract note from multiple possible sources:
+    // 1. Parentheses: #hex (note)
+    // 2. Comment after //: #hex // comment or $var: #hex; // comment
+    let note = '';
+    
+    const parenMatch = line.match(/\(([^)]*)\)/);
+    if (parenMatch) {
+      note = parenMatch[1].trim();
+    } else {
+      const commentMatch = line.match(/\/\/\s*(.*?)$/);
+      if (commentMatch) {
+        note = commentMatch[1].trim();
+      }
+    }
 
     newColors.push({
       id: (p.colors?.length || 0) + parseCount + 1,
