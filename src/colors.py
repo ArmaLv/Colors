@@ -42,7 +42,7 @@ ALPHA_THRESHOLD = 128             # Minimum alpha value to process
 DEFAULT_MAX_COLORS = 256          # Default max colors for extraction
 DEFAULT_TOLERANCE = 10            # Default color matching tolerance
 FAVICON_TOLERANCE = 30            # Tolerance for favicon color swapping
-PREVIEW_MAX_SIZE = 400            # Maximum dimension for preview images
+PREVIEW_MAX_SIZE = 2000           # Maximum dimension for preview images
 
 app = Flask(__name__, static_folder=STATIC_FOLDER, static_url_path="")
 

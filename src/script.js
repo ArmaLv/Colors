@@ -18,13 +18,13 @@ const THEME_STATE_KEY = 'palette_theme_state_v1';
 const THEMES = {
   default: {
     name: 'Default',
-    bg: '#0a0a0a',
-    panel: '#111111',
-    border: '#222222',
-    accent: '#e8ff47',
-    accent2: '#ff4747',
-    text: '#f0f0f0',
-    muted: '#555',
+    bg: '#e8e4e4',
+    panel: '#f0eded',
+    border: '#000000',
+    accent: '#8b9b24',
+    accent2: '#e03535',
+    text: '#000000',
+    muted: '#969696',
     preview: 'linear-gradient(135deg,#e8ff47,#ff4747)'
   },
   neon: {
@@ -503,6 +503,14 @@ function switchTab(name, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
+  
+  // Refresh color changer when switching to it
+  if (name === 'colorchanger') {
+    setTimeout(() => {
+      updateSliderValues();
+      refreshColorChanger();
+    }, 50);
+  }
 }
 
 function showToast(msg, isError = false) {
@@ -665,7 +673,7 @@ function renderPalettesTab() {
       const card = document.createElement('div');
       card.className = 'palette-card' + (p.id === activePaletteId ? ' active' : '');
       card.dataset.id = p.id;
-      card.onclick = () => { activePaletteId = p.id; renderPalettesTab(); renderPaletteEditor(); reapplyCurrentTheme(); updateFavicon(); };
+      card.onclick = () => { activePaletteId = p.id; renderPalettesTab(); renderPaletteEditor(); reapplyCurrentTheme(); updateFavicon(); refreshColorChanger(); };
 
       const top = document.createElement('div');
       top.className = 'palette-card-top';
@@ -1268,6 +1276,7 @@ let extractedColors = [];
 let sortMode = 'hue';
 let extractionAlgorithm = 'quantize';
 let nextColorId = 1; // For assigning unique IDs to extracted colors
+// isAnimatedImage and extractFromAllFrames are declared in animated-image-handler.js
 
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -1287,7 +1296,7 @@ function loadExtractorImage(file) {
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       currentImage = img;
       currentImageDataURL = ev.target.result;
       document.getElementById('imagePreview').src = ev.target.result;
@@ -1296,8 +1305,27 @@ function loadExtractorImage(file) {
       document.getElementById('imgMeta').textContent =
         `${img.width} × ${img.height}px · ${(file.size / 1024).toFixed(0)}KB`;
       document.getElementById('extractBtn').disabled = false;
+      document.getElementById('colorPickerBtn').disabled = false;
       const linkBtn = document.getElementById('sendToSwapperBtn');
       if (linkBtn) linkBtn.disabled = false;
+      
+      // Check if image is animated
+      if (typeof checkIfAnimated !== 'undefined') {
+        try {
+          const isAnimated = await checkIfAnimated(file);
+          if (isAnimated) {
+            isAnimatedImage = true;
+            if (typeof showAnimatedImageControl !== 'undefined') showAnimatedImageControl();
+          } else {
+            isAnimatedImage = false;
+            if (typeof hideAnimatedImageControl !== 'undefined') hideAnimatedImageControl();
+          }
+        } catch (err) {
+          console.log('Could not detect if image is animated');
+          if (typeof hideAnimatedImageControl !== 'undefined') hideAnimatedImageControl();
+        }
+      }
+      
       saveExtractorState();
     };
     img.src = ev.target.result;
@@ -1306,12 +1334,17 @@ function loadExtractorImage(file) {
 }
 
 function resetExtractor() {
+  colorPickerMode = false;
+  isAnimatedImage = false;
   currentImage = null; currentImageDataURL = null; extractedColors = [];
   nextColorId = 1; // Reset color ID counter
   dropZone.style.display = 'flex';
   document.getElementById('imagePreviewWrap').style.display = 'none';
   document.getElementById('extractBtn').disabled = true;
   document.getElementById('downloadBtn').disabled = true;
+  document.getElementById('colorPickerBtn').disabled = true;
+  document.getElementById('colorPickerBtn').classList.remove('active');
+  if (typeof hideAnimatedImageControl !== 'undefined') hideAnimatedImageControl();
   const saveBtn = document.getElementById('saveExtractorToPalettesBtn');
   if (saveBtn) saveBtn.disabled = true;
   const pa = document.getElementById('paletteArea');
@@ -1331,6 +1364,15 @@ function resetExtractor() {
 function updateMaxColors(v) { document.getElementById('maxColorsVal').textContent = v; }
 
 function setSort(mode, btn) {
+  if (btn.closest('.colorchanger-left')) {
+    colorChangerSortMethod = mode;
+    const container = btn.parentElement;
+    container.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateColorChanger();
+    return;
+  }
+
   sortMode = mode;
   const container = btn.parentElement;
   container.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
@@ -1358,6 +1400,42 @@ function setAlgorithm(algo, btn) {
 function extractColors() {
   if (!currentImage) return;
   const maxC = parseInt(document.getElementById('maxColors').value);
+  
+  // Check if we should extract from all frames of an animated image
+  if (isAnimatedImage && extractFromAllFrames && typeof extractColorsFromAllFrames !== 'undefined') {
+    // Get the file from the input element
+    const fileInput = document.getElementById('fileInput');
+    if (fileInput && fileInput.files.length > 0) {
+      extractColorsFromAllFrames(fileInput.files[0], extractionAlgorithm, maxC)
+        .then(sorted => {
+          extractedColors = sorted.map(c => {
+            if (!c.id) c.id = nextColorId++;
+            return c;
+          });
+          const maxId = Math.max(0, ...extractedColors.map(c => c.id || 0));
+          nextColorId = Math.max(nextColorId, maxId + 1);
+          
+          renderPalette(extractedColors);
+          document.getElementById('downloadBtn').disabled = false;
+          const saveBtn = document.getElementById('saveExtractorToPalettesBtn');
+          if (saveBtn) saveBtn.disabled = !extractedColors.length;
+          saveExtractorState();
+          showToast(`Extracted colors from all frames`);
+        })
+        .catch(err => {
+          console.error('Error extracting from all frames:', err);
+          showToast('Failed to extract from frames, using first frame', true);
+          extractFromFirstFrameOnly(maxC);
+        });
+      return;
+    }
+  }
+  
+  // Extract from first frame only (default)
+  extractFromFirstFrameOnly(maxC);
+}
+
+function extractFromFirstFrameOnly(maxC) {
   canvas.width = currentImage.width;
   canvas.height = currentImage.height;
   ctx.drawImage(currentImage, 0, 0);
@@ -1439,6 +1517,33 @@ function sortColors(colors) {
   const copy = [...colors];
   if (sortMode === 'custom') return copy;
   if (sortMode === 'hue') copy.sort((a, b) => rgbToHsl(a.r, a.g, a.b)[0] - rgbToHsl(b.r, b.g, b.b)[0]);
+  else if (sortMode === 'huelum') {
+    const hueOrder = { red: 0, yellow: 1, green: 2, blue: 3, other: 4 };
+    copy.sort((a, b) => {
+      const aHsl = rgbToHsl(a.r, a.g, a.b);
+      const bHsl = rgbToHsl(b.r, b.g, b.b);
+      // Classify hues into categories
+      const aCat = classifyHue(aHsl[0]);
+      const bCat = classifyHue(bHsl[0]);
+      // Primary: sort by hue category (red -> yellow -> green -> blue -> other)
+      if (hueOrder[aCat] !== hueOrder[bCat]) {
+        return hueOrder[aCat] - hueOrder[bCat];
+      }
+      // Secondary: sort by lightness within same category (dark -> light)
+      return aHsl[2] - bHsl[2];
+    });
+    
+    // Debug: show grouped colors by hue
+    const grouped = {};
+    copy.forEach(item => {
+      const hsl = rgbToHsl(item.r, item.g, item.b);
+      const cat = classifyHue(hsl[0]);
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(`${toHex(item.r, item.g, item.b)}(l:${hsl[2].toFixed(2)})`);
+    });
+    const debugStr = Object.keys(grouped).map(cat => `${cat}: ${grouped[cat].join(', ')}`).join('; ');
+    console.log('Hue+Luma Sort (Extractor):', debugStr);
+  }
   else if (sortMode === 'lum') copy.sort((a, b) => rgbToHsl(a.r, a.g, a.b)[2] - rgbToHsl(b.r, b.g, b.b)[2]);
   else if (sortMode === 'sat') copy.sort((a, b) => rgbToHsl(b.r, b.g, b.b)[1] - rgbToHsl(a.r, a.g, a.b)[1]);
   else if (sortMode === 'freq') copy.sort((a, b) => b.count - a.count);
@@ -2029,6 +2134,8 @@ function initLayoutResizers() {
   setupHorizontalResizer('.swapper-layout', 'swapperResizer', '--swapper-left', '--swapper-right', '340px', '1fr', true);
   // Palettes: list in px, editor in fr
   setupHorizontalResizer('.palettes-layout', 'palettesResizer', '--palettes-left', '--palettes-right', '360px', '1fr', true);
+  // Color Changer: settings in px, results in fr
+  setupHorizontalResizer('.colorchanger-bottom', 'colorchangerResizer', '--colorchanger-left', '--colorchanger-right', '320px', '1fr', true);
 }
 
 // ═══════════════════════════════════════
@@ -3118,7 +3225,7 @@ let lastPreviewHash = '';
 let isRendering = false;
 let renderQueued = false;
 
-const PREVIEW_MAX_SIZE = 400; // Lower resolution for fast preview
+const PREVIEW_MAX_SIZE = 2000; // Maximum dimension for live preview
 const DEBOUNCE_DELAY = 50; // ms debounce for live updates
 
 // Debounced render functions
@@ -3558,3 +3665,623 @@ initScanline();
 initCanvasTheme();
 restoreExtractorState();
 restoreSwapState();
+
+// ═══════════════════════════════════════
+//  COLOR CHANGER (LIVE HUE SHIFT)
+// ═══════════════════════════════════════
+
+// === COLOR CONVERSION UTILITIES ===
+function hexToRgbNorm(hexColor) {
+  const hex = normalizeHex(hexColor);
+  if (!hex) return null;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  return { r, g, b };
+}
+
+function rgbNormToHex(rgb) {
+  const clamp = (c) => Math.max(0, Math.min(1, c));
+  const r = Math.round(clamp(rgb.r) * 255);
+  const g = Math.round(clamp(rgb.g) * 255);
+  const b = Math.round(clamp(rgb.b) * 255);
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+// RGB to HLS (similar to Python's colorsys.rgb_to_hls)
+function rgbToHls(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  const minc = Math.min(r, g, b);
+  const l = (maxc + minc) / 2.0;
+  
+  if (minc === maxc) {
+    return { h: 0, l, s: 0 };
+  }
+  
+  if (l <= 0.5) {
+    var s = (maxc - minc) / (maxc + minc);
+  } else {
+    var s = (maxc - minc) / (2.0 - maxc - minc);
+  }
+  
+  const rc = (maxc - r) / (maxc - minc);
+  const gc = (maxc - g) / (maxc - minc);
+  const bc = (maxc - b) / (maxc - minc);
+  
+  if (r === maxc) {
+    var h = bc - gc;
+  } else if (g === maxc) {
+    var h = 2.0 + rc - bc;
+  } else {
+    var h = 4.0 + gc - rc;
+  }
+  
+  h = (h / 6.0) % 1.0;
+  if (h < 0) h += 1.0;
+  
+  return { h, l, s };
+}
+
+// HLS to RGB (similar to Python's colorsys.hls_to_rgb)
+function hlsToRgb(h, l, s) {
+  const _v = (m1, m2, hue) => {
+    hue = hue % 1.0;
+    if (hue < 0) hue += 1.0;
+    if (hue < 1/6) return m1 + (m2 - m1) * hue * 6.0;
+    if (hue < 1/2) return m2;
+    if (hue < 2/3) return m1 + (m2 - m1) * (2/3 - hue) * 6.0;
+    return m1;
+  };
+  
+  if (s === 0.0) {
+    return { r: l, g: l, b: l };
+  }
+  
+  if (l <= 0.5) {
+    var m2 = l * (1.0 + s);
+  } else {
+    var m2 = l + s - (l * s);
+  }
+  
+  const m1 = 2.0 * l - m2;
+  return {
+    r: _v(m1, m2, h + 1/3),
+    g: _v(m1, m2, h),
+    b: _v(m1, m2, h - 1/3)
+  };
+}
+
+function shiftHue(h, degrees) {
+  return (h + degrees / 360.0) % 1.0;
+}
+
+function classifyHue(h) {
+  const deg = h * 360;
+  if (180 <= deg && deg <= 260) return "blue";
+  if (80 <= deg && deg < 180) return "green";
+  if ((0 <= deg && deg < 40) || deg >= 320) return "red";
+  if (40 <= deg && deg < 80) return "yellow";
+  return "other";
+}
+
+// RGB to HSV (similar to Python's colorsys.rgb_to_hsv)
+function rgbToHsv(r, g, b) {
+  const maxc = Math.max(r, g, b);
+  const minc = Math.min(r, g, b);
+  const v = maxc;
+  
+  if (minc === maxc) {
+    return { h: 0, s: 0, v };
+  }
+  
+  const s = (maxc - minc) / maxc;
+  const rc = (maxc - r) / (maxc - minc);
+  const gc = (maxc - g) / (maxc - minc);
+  const bc = (maxc - b) / (maxc - minc);
+  
+  let h;
+  if (r === maxc) {
+    h = bc - gc;
+  } else if (g === maxc) {
+    h = 2.0 + rc - bc;
+  } else {
+    h = 4.0 + gc - rc;
+  }
+  
+  h = (h / 6.0) % 1.0;
+  if (h < 0) h += 1.0;
+  
+  return { h, s, v };
+}
+
+// HSV to RGB (similar to Python's colorsys.hsv_to_rgb)
+function hsvToRgb(h, s, v) {
+  if (s === 0.0) {
+    return { r: v, g: v, b: v };
+  }
+  
+  h = h % 1.0;
+  const i = Math.floor(h * 6.0);
+  const f = (h * 6.0) - i;
+  const p = v * (1.0 - s);
+  const q = v * (1.0 - s * f);
+  const t = v * (1.0 - s * (1.0 - f));
+  
+  switch (i % 6) {
+    case 0: return { r: v, g: t, b: p };
+    case 1: return { r: q, g: v, b: p };
+    case 2: return { r: p, g: v, b: t };
+    case 3: return { r: p, g: q, b: v };
+    case 4: return { r: t, g: p, b: v };
+    case 5: return { r: v, g: p, b: q };
+  }
+}
+
+function convertColor(hexColor) {
+  const rgb = hexToRgbNorm(hexColor);
+  if (!rgb) return null;
+  
+  const { r, g, b } = rgb;
+  const { h, l, s } = rgbToHls(r, g, b);
+  const category = classifyHue(h);
+  
+  // --- Hue shift ---
+  let newH = h;
+  if (category === "blue") {
+    newH = shiftHue(h, -8);
+  } else if (category === "green") {
+    newH = shiftHue(h, -15);
+  } else if (category === "red") {
+    newH = shiftHue(h, +15);
+  } else if (category === "yellow") {
+    newH = shiftHue(h, -20);
+  } else {
+    newH = shiftHue(h, -10);
+  }
+  
+  // --- Base adjustments ---
+  let newL = l * 0.65;
+  let newS = s * 0.8;
+  
+  // --- Overrides ---
+  if (newL > 0.75) {
+    newS *= 0.9;
+    newL *= 0.8;
+  } else if (newL < 0.15) {
+    newH = shiftHue(newH, -4);
+    newS *= 1.1;
+  }
+  
+  const { r: newR, g: newG, b: newB } = hlsToRgb(newH, newL, newS);
+  return rgbNormToHex({ r: newR, g: newG, b: newB });
+}
+
+// Color Changer Presets
+const colorChangerPresets = {
+  default: { hueIntensity: 100, lightness: 0.65, saturation: 0.8 },
+  subtle: { hueIntensity: 40, lightness: 0.85, saturation: 0.9 },
+  dramatic: { hueIntensity: 150, lightness: 0.5, saturation: 0.7 },
+  desaturate: { hueIntensity: 100, lightness: 0.65, saturation: 0.4 },
+  cool: { hueIntensity: 120, lightness: 0.6, saturation: 0.85 },
+  warm: { hueIntensity: 80, lightness: 0.7, saturation: 0.85 },
+  night: { isNightMode: true }
+};
+
+let colorChangerSortMethod = 'huelum'; // Track current sort method
+let currentPreset = 'default';
+let colorChangerInvert = false; // Track invert state
+let colorChangerGrayscale = false; // Track grayscale state
+
+function setColorChangerSort(method, buttonEl) {
+  colorChangerSortMethod = method;
+  
+  // Update active button styling
+  document.querySelectorAll('.settings-group:has(.sort-btns) .sort-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  buttonEl.classList.add('active');
+  
+  updateColorChanger();
+}
+
+function applyColorChangerPreset() {
+  const presetName = document.getElementById('colorChangerPresets').value;
+  if (!presetName || !colorChangerPresets[presetName]) return;
+  
+  currentPreset = presetName;
+  const preset = colorChangerPresets[presetName];
+  
+  if (preset.isNightMode) {
+    // Night mode uses HSV algorithm, disable manual sliders
+    document.getElementById('hueIntensity').disabled = true;
+    document.getElementById('lightnessAdjust').disabled = true;
+    document.getElementById('saturationAdjust').disabled = true;
+    document.getElementById('hueRotation').disabled = true;
+    document.getElementById('brightnessAdjust').disabled = true;
+    document.getElementById('vibranceAdjust').disabled = true;
+  } else {
+    // Normal modes use sliders
+    document.getElementById('hueIntensity').disabled = false;
+    document.getElementById('lightnessAdjust').disabled = false;
+    document.getElementById('saturationAdjust').disabled = false;
+    document.getElementById('hueRotation').disabled = false;
+    document.getElementById('brightnessAdjust').disabled = false;
+    document.getElementById('vibranceAdjust').disabled = false;
+    
+    document.getElementById('hueIntensity').value = preset.hueIntensity;
+    document.getElementById('lightnessAdjust').value = preset.lightness;
+    document.getElementById('saturationAdjust').value = preset.saturation;
+    
+    // Reset new sliders to defaults when applying preset
+    document.getElementById('hueRotation').value = 0;
+    document.getElementById('brightnessAdjust').value = 1;
+    document.getElementById('vibranceAdjust').value = 0;
+  }
+  
+  updateSliderValues();
+  updateColorChanger();
+}
+
+function updateSliderValues() {
+  document.getElementById('hueIntensityVal').textContent = document.getElementById('hueIntensity').value + '%';
+  document.getElementById('lightnessAdjustVal').textContent = parseFloat(document.getElementById('lightnessAdjust').value).toFixed(2);
+  document.getElementById('saturationAdjustVal').textContent = parseFloat(document.getElementById('saturationAdjust').value).toFixed(2);
+  document.getElementById('hueRotationVal').textContent = document.getElementById('hueRotation').value + '°';
+  document.getElementById('brightnessAdjustVal').textContent = parseFloat(document.getElementById('brightnessAdjust').value).toFixed(2);
+  document.getElementById('vibranceAdjustVal').textContent = parseFloat(document.getElementById('vibranceAdjust').value).toFixed(2);
+}
+
+function toggleInvert() {
+  colorChangerInvert = !colorChangerInvert;
+  const btn = document.getElementById('invertToggle');
+  btn.textContent = 'Invert: ' + (colorChangerInvert ? 'ON' : 'OFF');
+  btn.classList.toggle('active', colorChangerInvert);
+  updateColorChanger();
+}
+
+function toggleGrayscale() {
+  colorChangerGrayscale = !colorChangerGrayscale;
+  const btn = document.getElementById('grayscaleToggle');
+  btn.textContent = 'Grayscale: ' + (colorChangerGrayscale ? 'ON' : 'OFF');
+  btn.classList.toggle('active', colorChangerGrayscale);
+  updateColorChanger();
+}
+
+function getColorChangerSettings() {
+  return {
+    hueIntensity: parseInt(document.getElementById('hueIntensity').value) / 100,
+    lightness: parseFloat(document.getElementById('lightnessAdjust').value),
+    saturation: parseFloat(document.getElementById('saturationAdjust').value),
+    hueRotation: parseInt(document.getElementById('hueRotation').value),
+    brightness: parseFloat(document.getElementById('brightnessAdjust').value),
+    vibrance: parseFloat(document.getElementById('vibranceAdjust').value),
+    invert: colorChangerInvert,
+    grayscale: colorChangerGrayscale
+  };
+}
+
+function convertColorWithSettings(hexColor, settings) {
+  // Handle Night Mode preset (HSV-based algorithm)
+  if (currentPreset === 'night') {
+    const rgb = hexToRgbNorm(hexColor);
+    if (!rgb) return null;
+    
+    // RGB → HSV
+    const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+    
+    // Night mode parameters
+    const HUE_SHIFT = 0.04;    // shift toward blue
+    const SAT_MULT = 0.65;     // reduce saturation
+    const VAL_MULT = 0.55;     // darken
+    const VAL_CLAMP = 0.75;    // cap brightness
+    
+    // Apply transformations
+    let h = (hsv.h + HUE_SHIFT) % 1.0;
+    let s = hsv.s * SAT_MULT;
+    let v = hsv.v * VAL_MULT;
+    v = Math.min(v, VAL_CLAMP);
+    
+    // HSV → RGB
+    const newRgb = hsvToRgb(h, s, v);
+    return rgbNormToHex(newRgb);
+  }
+  
+  // Normal mode (HLS-based algorithm)
+  const rgb = hexToRgbNorm(hexColor);
+  if (!rgb) return null;
+  
+  const { r, g, b } = rgb;
+  const { h, l, s } = rgbToHls(r, g, b);
+  const category = classifyHue(h);
+  
+  // --- Hue shift (scaled by intensity) ---
+  let newH = h;
+  let hueShift = 0;
+  if (category === "blue") hueShift = -8;
+  else if (category === "green") hueShift = -15;
+  else if (category === "red") hueShift = +15;
+  else if (category === "yellow") hueShift = -20;
+  else hueShift = -10;
+  
+  newH = shiftHue(h, hueShift * settings.hueIntensity);
+  
+  // --- Apply lightness and saturation ---
+  let newL = l * settings.lightness;
+  let newS = s * settings.saturation;
+  
+  // --- Overrides ---
+  if (newL > 0.75) {
+    newS *= 0.9;
+    newL *= 0.8;
+  } else if (newL < 0.15) {
+    newH = shiftHue(newH, -4);
+    newS *= 1.1;
+  }
+  
+  // Apply hue rotation
+  if (settings.hueRotation !== 0) {
+    newH = shiftHue(newH, settings.hueRotation);
+  }
+  
+  // Apply vibrance (selective saturation)
+  if (settings.vibrance !== 0) {
+    newS = newS + (1 - newS) * settings.vibrance * 0.5;
+  }
+  
+  let { r: newR, g: newG, b: newB } = hlsToRgb(newH, newL, newS);
+  
+  // Apply brightness adjustment
+  if (settings.brightness !== 1) {
+    newR *= settings.brightness;
+    newG *= settings.brightness;
+    newB *= settings.brightness;
+  }
+  
+  // Apply grayscale if enabled
+  if (settings.grayscale) {
+    const gray = 0.299 * newR + 0.587 * newG + 0.114 * newB;
+    newR = gray;
+    newG = gray;
+    newB = gray;
+  }
+  
+  // Apply invert if enabled
+  if (settings.invert) {
+    newR = 1 - newR;
+    newG = 1 - newG;
+    newB = 1 - newB;
+  }
+  
+  // Clamp RGB values
+  newR = Math.max(0, Math.min(1, newR));
+  newG = Math.max(0, Math.min(1, newG));
+  newB = Math.max(0, Math.min(1, newB));
+  
+  return rgbNormToHex({ r: newR, g: newG, b: newB });
+}
+
+function renderSelectedPaletteSwatches(colors) {
+  const container = document.getElementById('selectedPaletteSwatches');
+  container.innerHTML = '';
+  
+  colors.forEach((color) => {
+    const item = document.createElement('div');
+    item.className = 'strip-color';
+    item.style.background = color;
+    item.title = color;
+    container.appendChild(item);
+  });
+}
+
+function refreshColorChanger() {
+  const palette = getActivePalette();
+  if (!palette || !palette.colors || palette.colors.length === 0) {
+    document.getElementById('selectedPaletteSwatches').innerHTML = '';
+    document.getElementById('colorChangerTableBody').innerHTML = '';
+    document.getElementById('scssOutput').value = '';
+    document.getElementById('exportColorChangerBtn').disabled = true;
+    return;
+  }
+  
+  // Extract hex colors from palette
+  const colors = palette.colors.map(c => {
+    if (typeof c === 'string') return normalizeHex(c);
+    return normalizeHex(c.hex || c);
+  }).filter(Boolean);
+  
+  if (colors.length === 0) {
+    document.getElementById('selectedPaletteSwatches').innerHTML = '';
+    return;
+  }
+  
+  renderSelectedPaletteSwatches(colors);
+  updateColorChanger();
+}
+
+function updateColorChanger() {
+  const palette = getActivePalette();
+  if (!palette || !palette.colors || palette.colors.length === 0) return;
+  
+  const colors = palette.colors.map(c => {
+    if (typeof c === 'string') return normalizeHex(c);
+    return normalizeHex(c.hex || c);
+  }).filter(Boolean);
+  
+  if (colors.length === 0) return;
+  
+  const settings = getColorChangerSettings();
+  
+  // Convert all colors
+  const results = colors.map((color, index) => ({
+    index: index + 1,
+    original: color,
+    converted: convertColorWithSettings(color, settings)
+  }));
+  
+  // Sort results based on current sort method
+  const sortedResults = sortColorChangerResults(results).map((item, index) => ({
+    ...item,
+    index: index + 1
+  }));
+  
+  // Render table and SCSS
+  renderColorChangerTable(sortedResults);
+  renderColorChangerScss(sortedResults);
+  document.getElementById('exportColorChangerBtn').disabled = false;
+}
+
+function getColorSortMetrics(hexColor) {
+  const rgb = hexToRgbNorm(hexColor);
+  if (!rgb) return null;
+
+  const hls = rgbToHls(rgb.r, rgb.g, rgb.b);
+  const category = classifyHue(hls.h);
+  const hueDeg = hls.h * 360;
+  const luma = (0.2126 * rgb.r) + (0.7152 * rgb.g) + (0.0722 * rgb.b);
+
+  return {
+    h: hls.h,
+    s: hls.s,
+    l: hls.l,
+    hueDeg,
+    luma,
+    category
+  };
+}
+
+function sortColorChangerResults(results) {
+  const sorted = [...results];
+  const hueOrder = { red: 0, yellow: 1, green: 2, blue: 3, other: 4 };
+  
+  if (colorChangerSortMethod === 'huelum') {
+    sorted.sort((a, b) => {
+      const aRgb = hexToRgbNorm(a.original);
+      const bRgb = hexToRgbNorm(b.original);
+      if (!aRgb || !bRgb) return 0;
+      const aHsl = rgbToHsl(aRgb.r * 255, aRgb.g * 255, aRgb.b * 255);
+      const bHsl = rgbToHsl(bRgb.r * 255, bRgb.g * 255, bRgb.b * 255);
+      
+      // Classify hues into categories
+      const aCat = classifyHue(aHsl[0]);
+      const bCat = classifyHue(bHsl[0]);
+      
+      // Primary: sort by hue category (red -> yellow -> green -> blue -> other)
+      if (hueOrder[aCat] !== hueOrder[bCat]) {
+        return hueOrder[aCat] - hueOrder[bCat];
+      }
+      
+      // Secondary: sort by lightness within same category (dark -> light)
+      return aHsl[2] - bHsl[2];
+    });
+    
+    // Debug: show grouped colors by hue
+    const grouped = {};
+    sorted.forEach(item => {
+      const rgb = hexToRgbNorm(item.original);
+      const hsl = rgbToHsl(rgb.r * 255, rgb.g * 255, rgb.b * 255);
+      const cat = classifyHue(hsl[0]);
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(`${item.original}(l:${hsl[2].toFixed(2)})`);
+    });
+    const debugStr = Object.keys(grouped).map(cat => `${cat}: ${grouped[cat].join(', ')}`).join('; ');
+    console.log('Hue+Luma Sort:', debugStr);
+  } else if (colorChangerSortMethod === 'hue') {
+    sorted.sort((a, b) => {
+      const aRgb = hexToRgbNorm(a.original);
+      const bRgb = hexToRgbNorm(b.original);
+      if (!aRgb || !bRgb) return 0;
+      const aHsl = rgbToHsl(aRgb.r * 255, aRgb.g * 255, aRgb.b * 255);
+      const bHsl = rgbToHsl(bRgb.r * 255, bRgb.g * 255, bRgb.b * 255);
+      return aHsl[0] - bHsl[0];
+    });
+  } else if (colorChangerSortMethod === 'lum') {
+    sorted.sort((a, b) => {
+      const aRgb = hexToRgbNorm(a.original);
+      const bRgb = hexToRgbNorm(b.original);
+      if (!aRgb || !bRgb) return 0;
+      const aHsl = rgbToHsl(aRgb.r * 255, aRgb.g * 255, aRgb.b * 255);
+      const bHsl = rgbToHsl(bRgb.r * 255, bRgb.g * 255, bRgb.b * 255);
+      return aHsl[2] - bHsl[2];
+    });
+  } else if (colorChangerSortMethod === 'sat') {
+    sorted.sort((a, b) => {
+      const aRgb = hexToRgbNorm(a.original);
+      const bRgb = hexToRgbNorm(b.original);
+      if (!aRgb || !bRgb) return 0;
+      const aHsl = rgbToHsl(aRgb.r * 255, aRgb.g * 255, aRgb.b * 255);
+      const bHsl = rgbToHsl(bRgb.r * 255, bRgb.g * 255, bRgb.b * 255);
+      return bHsl[1] - aHsl[1];
+    });
+  }
+
+  // 'freq' keeps original order.
+  
+  return sorted;
+}
+
+function renderColorChangerTable(results) {
+  const tbody = document.getElementById('colorChangerTableBody');
+  tbody.innerHTML = '';
+  
+  results.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'results-row';
+    row.innerHTML = `
+      <div class="results-col results-col-index">${item.index}</div>
+      <div class="results-col results-col-original">
+        <div class="result-swatch" style="background: ${item.original};"></div>
+        <span class="result-hex">${item.original}</span>
+      </div>
+      <div class="results-col results-col-converted">
+        <div class="result-swatch" style="background: ${item.converted};"></div>
+        <span class="result-hex">${item.converted}</span>
+      </div>
+      <div class="results-col results-col-scss">
+        <code>$color-${item.index}: ${item.converted};</code>
+      </div>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function renderColorChangerScss(results) {
+  let scss = '';
+  results.forEach(item => {
+    scss += `$color-${item.index}: ${item.converted};  // from ${item.original}\n`;
+  });
+  document.getElementById('scssOutput').value = scss;
+}
+
+function copyScssOutput() {
+  const textarea = document.getElementById('scssOutput');
+  textarea.select();
+  document.execCommand('copy');
+  showToast('SCSS copied to clipboard!');
+}
+
+function exportColorChangerOutput() {
+  const scss = document.getElementById('scssOutput').value;
+  if (!scss) {
+    showToast('No data to export', true);
+    return;
+  }
+  
+  const blob = new Blob([scss], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'colors.scss';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Downloaded colors.scss');
+}
+
+function copyToClipboard(text) {
+  const elem = document.createElement('textarea');
+  elem.value = text;
+  document.body.appendChild(elem);
+  elem.select();
+  document.execCommand('copy');
+  document.body.removeChild(elem);
+  showToast(`Copied ${text}`);
+}
